@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Semantic Search Example</title>
+  <style>body{font-family:system-ui,Segoe UI,Arial;margin:20px}input{padding:8px}button{padding:8px;margin-left:8px}pre{background:#f6f8fa;padding:12px;border-radius:6px}</style>
+</head>
+<body>
+  <h2>Semantic Search (pgvector) — Example</h2>
+  <p>Type a query and press <strong>Search</strong>. This calls <code>/api/search/vector</code>.</p>
+  <input id="q" placeholder="Search query" style="width:60%" />
+  <button id="btn">Search</button>
+  <pre id="out">Results will appear here.</pre>
+
+  <script>
+    document.getElementById('btn').onclick = async () => {
+      const q = document.getElementById('q').value.trim();
+      if (!q) return (document.getElementById('out').textContent = 'Enter a query');
+      document.getElementById('out').textContent = 'Searching...';
+      try {
+        const res = await fetch('/api/search/vector', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, top_k: 10 })
+        });
+        const body = await res.json();
+        if (!body.success) return document.getElementById('out').textContent = 'Error: ' + (body.error || 'unknown');
+        const rows = body.data || [];
+        if (!rows.length) return document.getElementById('out').textContent = 'No results';
+        document.getElementById('out').textContent = rows.map(r => `${r.page_id} | ${r.page_name} | score: ${Number(r.score).toFixed(4)}`).join('\n');
+      } catch (err) {
+        document.getElementById('out').textContent = 'Request failed: ' + (err.message || err);
+      }
+    };
+  </script>
+</body>
+</html>

@@ -3,6 +3,8 @@ import axios from "axios";
 import OpenAI from "openai";
 import dotenv from "dotenv";
 import * as db from "./database.js";
+import { initPgVector, query as pgQuery } from './pg_database.js';
+import { getEmbedding } from './embedding_service.js';
 
 dotenv.config();
 
@@ -22,6 +24,15 @@ if (OPENAI_API_KEY && OPENAI_API_KEY !== "هنا_تحط_API_بتاع_OpenAI") {
 }
 
 console.log("🚀 Server starting...");
+
+// Initialize pgvector extension (no-op if Postgres not available)
+(async () => {
+    try {
+        await initPgVector();
+    } catch (err) {
+        console.warn('pgvector init skipped or failed:', err?.message || err);
+    }
+})();
 
 // ==================== WEBHOOK ENDPOINTS ====================
 
@@ -49,6 +60,10 @@ app.get("/webhook", (req, res) => {
  */
 app.post("/webhook", async (req, res) => {
     const body = req.body;
+
+    // DEBUG: Log every incoming request to see what Facebook is sending
+    console.log("🔍 [DEBUG WEBHOOK] Incoming POST request:");
+    console.log(JSON.stringify(body, null, 2));
 
     if (body.object === "page") {
         // Process each entry
@@ -204,6 +219,78 @@ app.get("/api/pages", async (req, res) => {
 });
 
 /**
+ * Vector search endpoint
+ * POST /api/search/vector
+ * Body: { query: string, top_k?: number }
+ */
+app.post('/api/search/vector', async (req, res) => {
+    try {
+        const { query } = req.body;
+        const top_k = Number(req.body.top_k || 10);
+
+        if (!query) return res.status(400).json({ success: false, error: 'Missing query' });
+        if (!process.env.OPENAI_API_KEY) return res.status(500).json({ success: false, error: 'OpenAI not configured' });
+
+        // 1. Embed the query
+        const qEmbedding = await getEmbedding(query);
+
+        // Convert to Postgres vector literal: e.g. '[0.1,0.2, ...]'
+        const vecLiteral = '[' + qEmbedding.join(',') + ']';
+
+        // 2. Run pgvector ANN search (cosine via vector_cosine_ops)
+        const sql = `
+            SELECT id, page_id, page_name, created_at,
+                   1 - (embedding <#> $1::vector) AS score
+            FROM pages
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <#> $1::vector
+            LIMIT $2
+        `;
+
+        const result = await pgQuery(sql, [vecLiteral, top_k]);
+
+        return res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error('Vector search error:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Document-level vector search
+ * POST /api/search/documents
+ * Body: { query: string, top_k?: number }
+ */
+app.post('/api/search/documents', async (req, res) => {
+    try {
+        const { query } = req.body;
+        const top_k = Number(req.body.top_k || 10);
+
+        if (!query) return res.status(400).json({ success: false, error: 'Missing query' });
+        if (!process.env.OPENAI_API_KEY) return res.status(500).json({ success: false, error: 'OpenAI not configured' });
+
+        const qEmbedding = await getEmbedding(query);
+        const vecLiteral = '[' + qEmbedding.join(',') + ']';
+
+        const sql = `
+            SELECT pd.id, pd.page_id, p.page_name, pd.doc_id, pd.doc_type, pd.content,
+                   1 - (pd.embedding <#> $1::vector) AS score
+            FROM page_documents pd
+            LEFT JOIN pages p ON p.page_id = pd.page_id
+            WHERE pd.embedding IS NOT NULL
+            ORDER BY pd.embedding <#> $1::vector
+            LIMIT $2
+        `;
+
+        const result = await pgQuery(sql, [vecLiteral, top_k]);
+        return res.json({ success: true, data: result.rows });
+    } catch (err) {
+        console.error('Document search error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
  * Add a new page
  * POST /api/pages
  * Body: { page_id, page_token, page_name }
@@ -225,6 +312,32 @@ app.post("/api/pages", async (req, res) => {
             res.json({ success: true, message: "Page added successfully", id: result.id });
         } else {
             res.status(400).json({ success: false, error: result.error });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Update page metadata (name, token)
+ * PUT /api/pages/:id
+ * Body: { page_name?, page_token? }
+ */
+app.put('/api/pages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { page_name, page_token } = req.body;
+
+        if (page_name === undefined && page_token === undefined) {
+            return res.status(400).json({ success: false, error: 'No fields to update' });
+        }
+
+        const success = await db.updatePage(id, page_name, page_token);
+
+        if (success) {
+            res.json({ success: true, message: 'Page updated and synced' });
+        } else {
+            res.status(404).json({ success: false, error: 'Page not found' });
         }
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -370,3 +483,12 @@ app.listen(PORT, () => {
     console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard.html`);
     console.log(`🔗 Webhook URL: http://localhost:${PORT}/webhook\n`);
 });
+
+// Export app for testing (do not start server when running tests)
+if (process.env.NODE_ENV !== 'test') {
+    // server already started above in normal runs
+} else {
+    console.log('🧪 Running in test mode; server.listen suppressed');
+}
+
+export default app;

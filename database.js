@@ -135,6 +135,11 @@ export async function addPage(pageId, pageToken, pageName) {
             page_token: pageToken,
             page_name: pageName
         });
+        // Fire-and-forget: sync to Postgres + pgvector for semantic search
+        import('./sync_to_pg.js').then(mod => mod.upsertPageToPg(page)).catch(err => {
+            console.warn('Background sync to Postgres failed:', err?.message || err);
+        });
+
         return { success: true, id: page._id };
     } catch (error) {
         if (error.code === 11000) {
@@ -176,6 +181,12 @@ export async function deletePage(id) {
     // Also delete all app rules
     if (result) {
         await Rule.deleteMany({ page_id: result.page_id });
+        // Remove from Postgres pages table if present
+        import('./pg_database.js').then(mod => {
+            mod.query('DELETE FROM pages WHERE page_id = $1', [result.page_id]).then(() => {
+                console.log('✅ Removed page from Postgres:', result.page_id);
+            }).catch(err => console.warn('❌ Failed to remove page from Postgres:', err?.message || err));
+        }).catch(err => console.warn('❌ Failed to load pg_database for delete:', err?.message || err));
     }
 
     return result !== null;
@@ -195,6 +206,37 @@ export async function updatePageAI(id, aiEnabled, aiInstructions) {
         updateData,
         { new: true }
     );
+
+    if (result) {
+        // Fire-and-forget: re-sync updated page to Postgres
+        import('./sync_to_pg.js').then(mod => mod.upsertPageToPg(result)).catch(err => {
+            console.warn('Background sync to Postgres failed (update):', err?.message || err);
+        });
+    }
+
+    return result !== null;
+}
+
+/**
+ * Update page metadata (name, token)
+ */
+export async function updatePage(id, pageName, pageToken) {
+    const updateData = {};
+    if (pageName !== undefined) updateData.page_name = pageName;
+    if (pageToken !== undefined) updateData.page_token = pageToken;
+
+    const result = await Page.findByIdAndUpdate(
+        id,
+        updateData,
+        { new: true }
+    );
+
+    if (result) {
+        // Fire-and-forget: re-sync updated page to Postgres
+        import('./sync_to_pg.js').then(mod => mod.upsertPageToPg(result)).catch(err => {
+            console.warn('Background sync to Postgres failed (updatePage):', err?.message || err);
+        });
+    }
 
     return result !== null;
 }
