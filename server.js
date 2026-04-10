@@ -6,6 +6,8 @@ import * as db from "./database.js";
 import { initPgVector, query as pgQuery } from './pg_database.js';
 import { getEmbedding } from './embedding_service.js';
 
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 dotenv.config();
 
 const app = express();
@@ -135,10 +137,14 @@ async function handleMessage(pageId, senderId, message) {
                 const history = await db.getConversation(pageId, senderId);
 
                 // Build messages array with system prompt and history
+                const knowledgeSection = page.knowledge_base
+                    ? `\n\n📚 معلومات الصفحة والأعمال (استخدم هذه المعلومات للإجابة على الأسئلة):\n${page.knowledge_base}`
+                    : '';
+
                 const messages = [
                     {
                         role: "system",
-                        content: `أنت مساعد خدمة عملاء لصفحة "${page.page_name}" على فيسبوك.\n\nتعليمات:\n${page.ai_instructions || 'قم بالرد بشكل محترف ومفيد على استفسارات العملاء.'}\n\nملاحظة: احرص على الرد بنفس لغة العميل (عربي أو إنجليزي).`
+                        content: `أنت مساعد خدمة عملاء لصفحة "${page.page_name}" على فيسبوك.${knowledgeSection}\n\nتعليمات:\n${page.ai_instructions || 'قم بالرد بشكل محترف ومفيد على استفسارات العملاء.'}\n\nملاحظة: احرص على الرد بنفس لغة العميل (عربي أو إنجليزي). استخدم دائماً المعلومات المتاحة لك للإجابة بدقة.`
                     },
                     ...history,
                     { role: "user", content: message }
@@ -377,6 +383,32 @@ app.put("/api/pages/:id/ai", async (req, res) => {
 
         if (success) {
             res.json({ success: true, message: "AI settings updated successfully" });
+        } else {
+            res.status(404).json({ success: false, error: "Page not found" });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Update page knowledge base
+ * PUT /api/pages/:id/knowledge
+ * Body: { knowledge_base: string }
+ */
+app.put("/api/pages/:id/knowledge", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { knowledge_base } = req.body;
+
+        if (knowledge_base === undefined) {
+            return res.status(400).json({ success: false, error: "Missing knowledge_base field" });
+        }
+
+        const success = await db.updatePageKnowledge(id, knowledge_base);
+
+        if (success) {
+            res.json({ success: true, message: "Knowledge base updated successfully" });
         } else {
             res.status(404).json({ success: false, error: "Page not found" });
         }

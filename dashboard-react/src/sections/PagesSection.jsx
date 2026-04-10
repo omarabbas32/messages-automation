@@ -2,7 +2,7 @@ import { useState } from 'react';
 import PageCard from '../components/PageCard/PageCard';
 import './PagesSection.css';
 
-function PagesSection({ pages, onAddPage, onDeletePage }) {
+function PagesSection({ pages, onAddPage, onDeletePage, onUpdateAI, onUpdateKnowledge, onUpdatePage }) {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [formData, setFormData] = useState({
         page_id: '',
@@ -111,6 +111,9 @@ function PagesSection({ pages, onAddPage, onDeletePage }) {
                             key={page.id}
                             page={page}
                             onDelete={onDeletePage}
+                            onUpdateAI={onUpdateAI}
+                            onUpdateKnowledge={onUpdateKnowledge}
+                            onUpdatePage={onUpdatePage}
                         />
                     ))
                 )}

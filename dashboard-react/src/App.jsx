@@ -55,6 +55,66 @@ function App() {
     : [];
 
   // Page handlers
+  const handleUpdateAI = async (id, aiData) => {
+    try {
+      const response = await fetch(`/api/pages/${id}/ai`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(aiData)
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPages(prev => prev.map(p => p.id === id ? { ...p, ...aiData } : p));
+        return true;
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+      return false;
+    }
+  };
+
+  const handleUpdateKnowledge = async (id, knowledge) => {
+    try {
+      const response = await fetch(`/api/pages/${id}/knowledge`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ knowledge_base: knowledge })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPages(prev => prev.map(p => p.id === id ? { ...p, knowledge_base: knowledge } : p));
+        return true;
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+      return false;
+    }
+  };
+
+  const handleUpdatePage = async (id, pageData) => {
+    try {
+      const response = await fetch(`/api/pages/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pageData)
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPages(prev => prev.map(p => p.id === id ? { ...p, ...pageData } : p));
+        return true;
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+      return false;
+    }
+  };
+
   const handleAddPage = async (pageData) => {
     try {
       const response = await fetch('/api/pages', {
@@ -226,6 +286,9 @@ function App() {
             pages={pages}
             onAddPage={handleAddPage}
             onDeletePage={handleDeletePage}
+            onUpdateAI={handleUpdateAI}
+            onUpdateKnowledge={handleUpdateKnowledge}
+            onUpdatePage={handleUpdatePage}
           />
 
           <RulesSection

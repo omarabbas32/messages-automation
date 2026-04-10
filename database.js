@@ -30,6 +30,10 @@ const pageSchema = new mongoose.Schema({
         type: String,
         default: "أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد."
     },
+    knowledge_base: {
+        type: String,
+        default: ""
+    },
     created_at: {
         type: Date,
         default: Date.now
@@ -208,12 +212,23 @@ export async function updatePageAI(id, aiEnabled, aiInstructions) {
     );
 
     if (result) {
-        // Fire-and-forget: re-sync updated page to Postgres
         import('./sync_to_pg.js').then(mod => mod.upsertPageToPg(result)).catch(err => {
             console.warn('Background sync to Postgres failed (update):', err?.message || err);
         });
     }
 
+    return result !== null;
+}
+
+/**
+ * Update page knowledge base
+ */
+export async function updatePageKnowledge(id, knowledgeBase) {
+    const result = await Page.findByIdAndUpdate(
+        id,
+        { knowledge_base: knowledgeBase },
+        { new: true }
+    );
     return result !== null;
 }
 
