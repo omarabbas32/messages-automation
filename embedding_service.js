@@ -17,21 +17,35 @@ async function ensureClient() {
   if (!client) throw new Error('OpenAI API key not configured');
 }
 
-export async function getEmbedding(text) {
-  await ensureClient();
+export async function getEmbedding(text, apiKey = null) {
+  // Use custom key if provided, otherwise fallback to global client
+  let activeClient = client;
+  if (apiKey) {
+    activeClient = new OpenAI({ apiKey });
+  }
+
+  if (!activeClient) throw new Error('OpenAI API key not configured');
+
   // check cache first
   const cached = await cacheGet(text);
   if (cached) return cached;
 
-  const resp = await client.embeddings.create({ model: EMBEDDING_MODEL, input: text });
+  const resp = await activeClient.embeddings.create({ model: EMBEDDING_MODEL, input: text });
   const emb = resp.data[0].embedding;
+  
   // store in cache
   try { await cacheSet(text, emb); } catch (err) { /* ignore cache errors */ }
   return emb;
 }
 
-export async function getEmbeddings(texts) {
-  await ensureClient();
+export async function getEmbeddings(texts, apiKey = null) {
+  let activeClient = client;
+  if (apiKey) {
+    activeClient = new OpenAI({ apiKey });
+  }
+
+  if (!activeClient) throw new Error('OpenAI API key not configured');
+
   // try to get cached embeddings
   const cachedMap = await cacheGetMany(texts);
   const results = [];
@@ -50,7 +64,7 @@ export async function getEmbeddings(texts) {
   }
 
   if (toFetch.length > 0) {
-    const resp = await client.embeddings.create({ model: EMBEDDING_MODEL, input: toFetch });
+    const resp = await activeClient.embeddings.create({ model: EMBEDDING_MODEL, input: toFetch });
     const fetched = resp.data.map(d => d.embedding);
 
     // write fetched embeddings into results and cache

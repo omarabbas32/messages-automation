@@ -7,6 +7,7 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage 
     const [pageToken, setPageToken] = useState(''); // Token is sensitive, don't show existing one
     const [aiInstructions, setAiInstructions] = useState(page.ai_instructions || '');
     const [aiEnabled, setAiEnabled] = useState(page.ai_enabled !== false);
+    const [aiContextLimit, setAiContextLimit] = useState(page.ai_context_limit || 5);
     const [knowledgeBase, setKnowledgeBase] = useState(page.knowledge_base || '');
     const [isSaving, setIsSaving] = useState(false);
 
@@ -32,7 +33,8 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage 
         // 2. Update AI settings
         const successAI = await onUpdateAI(page.id, {
             ai_enabled: aiEnabled,
-            ai_instructions: aiInstructions
+            ai_instructions: aiInstructions,
+            ai_context_limit: aiContextLimit
         });
 
         // 3. Update Knowledge Base
@@ -128,6 +130,20 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage 
                                 rows="3"
                                 className="form-textarea"
                             />
+                        </div>
+
+                        <div className="form-group mb-2">
+                            <label>Context History (Messages)</label>
+                            <input 
+                                type="number"
+                                min="1"
+                                max="10"
+                                value={aiContextLimit}
+                                onChange={(e) => setAiContextLimit(parseInt(e.target.value) || 1)}
+                                className="form-input"
+                                style={{ width: '80px' }}
+                            />
+                            <small className="form-hint ml-2">How many previous messages should the AI remember? (Max: 10)</small>
                         </div>
 
                         <div className="form-group">

@@ -2,54 +2,115 @@ import { useState, useEffect } from 'react';
 import Navbar from './components/Navbar/Navbar';
 import PagesSection from './sections/PagesSection';
 import RulesSection from './sections/RulesSection';
+import SettingsPage from './components/SettingsPage/SettingsPage';
+import LoginPage from './sections/Auth/LoginPage';
+import RegisterPage from './sections/Auth/RegisterPage';
+import { useAuth } from './contexts/AuthContext';
 import './App.css';
 
 function App() {
-  // State management
+  const { user, isLoading, refreshSession } = useAuth();
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center" style={{ height: '100vh', background: '#0f0f0f', color: '#fff' }}>
+        <div style={{ textAlign: 'center' }}>
+          <i className="fa-solid fa-circle-notch fa-spin fa-3x mb-4"></i>
+          <h2 style={{ marginTop: '20px' }}>Wink is waking up...</h2>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return authMode === 'login' 
+      ? <LoginPage onSwitchToRegister={() => setAuthMode('register')} />
+      : <RegisterPage onSwitchToLogin={() => setAuthMode('login')} />;
+  }
+
+  return <DashboardContent />;
+}
+
+function DashboardContent() {
+  const { getToken, logout, refreshSession, user } = useAuth();
   const [pages, setPages] = useState([]);
-  const [allRules, setAllRules] = useState([]); // Array of all rules from DB
+  const [allRules, setAllRules] = useState([]);
   const [selectedPageId, setSelectedPageId] = useState(null);
+  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' or 'settings'
+  const [userSettings, setUserSettings] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Central API Fetch Wrapper with Automatic Refresh
+  const apiFetch = async (url, options = {}) => {
+    const execute = async (token) => {
+        const headers = {
+            ...options.headers,
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+        };
+        return fetch(url, { ...options, headers });
+    };
+
+    try {
+      let token = await getToken();
+      let response = await execute(token);
+      
+      // If 401, token might be expired. Try to refresh once.
+      if (response.status === 401) {
+          console.warn("🔐 Access token expired, attempting refresh...");
+          await refreshSession(); 
+          token = await getToken(); // Get the new token
+          if (token) {
+              response = await execute(token); // Retry original request
+          }
+      }
+
+      if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Request failed');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error(`API Fetch Error (${url}):`, error);
+      throw error;
+    }
+  };
 
   // Initial Data Fetch
   useEffect(() => {
-    fetchData();
+    fetchInitialData();
   }, []);
 
-  const fetchData = async () => {
+  const fetchInitialData = async () => {
     try {
       setIsLoading(true);
-      const [pagesRes, rulesRes] = await Promise.all([
-        fetch('/api/pages'),
-        fetch('/api/rules')
+      const [pagesRes, rulesRes, settingsRes] = await Promise.all([
+        apiFetch('/api/pages'),
+        apiFetch('/api/rules'),
+        apiFetch('/api/user/settings')
       ]);
 
-      const pagesData = await pagesRes.json();
-      const rulesData = await rulesRes.json();
-
-      if (pagesData.success) {
-        setPages(pagesData.data);
-      }
-
-      if (rulesData.success) {
-        setAllRules(rulesData.data);
-      }
+      if (pagesRes.success) setPages(pagesRes.data);
+      if (rulesRes.success) setAllRules(rulesRes.data);
+      if (settingsRes.success) setUserSettings(settingsRes.data);
+      
     } catch (error) {
       console.error('Error fetching data:', error);
-      window.Swal.fire({
-        title: 'Connection Error',
-        text: 'Failed to connect to the server. Please ensure the backend is running.',
-        icon: 'error'
-      });
     } finally {
       setIsLoading(false);
     }
   };
 
+  const fetchUserSettings = async () => {
+    try {
+      const result = await apiFetch('/api/user/settings');
+      if (result.success) setUserSettings(result.data);
+    } catch (error) {}
+  };
+
   // Filter rules for selected page
-  // The API returns all rules with page_id, so we filter on the frontend for the selected view
-  // Note: API also supports ?page_id=XXX but for simplicity we fetch all and filter here
-  // or we can refactor to fetch on selection. Let's keep it simple for now.
   const currentRules = selectedPageId
     ? allRules.filter(r => r.page_id === selectedPageId)
     : [];
@@ -57,17 +118,13 @@ function App() {
   // Page handlers
   const handleUpdateAI = async (id, aiData) => {
     try {
-      const response = await fetch(`/api/pages/${id}/ai`, {
+      const result = await apiFetch(`/api/pages/${id}/ai`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(aiData)
       });
-      const result = await response.json();
       if (result.success) {
         setPages(prev => prev.map(p => p.id === id ? { ...p, ...aiData } : p));
         return true;
-      } else {
-        throw new Error(result.error);
       }
     } catch (error) {
       window.Swal.fire('Error', error.message, 'error');
@@ -77,17 +134,13 @@ function App() {
 
   const handleUpdateKnowledge = async (id, knowledge) => {
     try {
-      const response = await fetch(`/api/pages/${id}/knowledge`, {
+      const result = await apiFetch(`/api/pages/${id}/knowledge`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ knowledge_base: knowledge })
       });
-      const result = await response.json();
       if (result.success) {
         setPages(prev => prev.map(p => p.id === id ? { ...p, knowledge_base: knowledge } : p));
         return true;
-      } else {
-        throw new Error(result.error);
       }
     } catch (error) {
       window.Swal.fire('Error', error.message, 'error');
@@ -97,17 +150,13 @@ function App() {
 
   const handleUpdatePage = async (id, pageData) => {
     try {
-      const response = await fetch(`/api/pages/${id}`, {
+      const result = await apiFetch(`/api/pages/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(pageData)
       });
-      const result = await response.json();
       if (result.success) {
         setPages(prev => prev.map(p => p.id === id ? { ...p, ...pageData } : p));
         return true;
-      } else {
-        throw new Error(result.error);
       }
     } catch (error) {
       window.Swal.fire('Error', error.message, 'error');
@@ -117,160 +166,92 @@ function App() {
 
   const handleAddPage = async (pageData) => {
     try {
-      const response = await fetch('/api/pages', {
+      const result = await apiFetch('/api/pages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(pageData)
       });
-      const result = await response.json();
 
       if (result.success) {
-        // Refresh data or update local state
-        // For accurate timestamps/IDs, usually better to re-fetch or use returned ID
-        // Let's just re-fetch for simplicity or append optimistically if we had full object
-        // Re-fetching ensures we have the DB ID
-        fetchData();
-
-        window.Swal.fire({
-          title: 'Success!',
-          text: 'Page added successfully',
-          icon: 'success',
-          confirmButtonColor: '#000000'
-        });
-      } else {
-        throw new Error(result.error);
+        fetchInitialData();
+        window.Swal.fire({ title: 'Success!', text: 'Page added successfully', icon: 'success' });
       }
     } catch (error) {
-      window.Swal.fire({
-        title: 'Error',
-        text: error.message || 'Failed to add page',
-        icon: 'error'
-      });
+      window.Swal.fire('Error', error.message, 'error');
     }
   };
 
   const handleDeletePage = async (id, name) => {
     window.Swal.fire({
       title: 'Are you sure?',
-      text: `Do you want to delete "${name}"? All associated rules will be deleted.`,
+      text: `Delete "${name}"?`,
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: '#d33',
-      cancelButtonColor: '#3085d6',
-      confirmButtonText: 'Yes, delete it!'
+      confirmButtonColor: '#d33'
     }).then(async (result) => {
       if (result.isConfirmed) {
         try {
-          const response = await fetch(`/api/pages/${id}`, { method: 'DELETE' });
-          const result = await response.json();
-
-          if (result.success) {
+          const res = await apiFetch(`/api/pages/${id}`, { method: 'DELETE' });
+          if (res.success) {
             setPages(prev => prev.filter(p => p.id !== id));
-            // Also remove rules for this page from local state
-            // Need to find the page_id corresponding to this DB id first if needed, 
-            // but filtered lists update automatically if page is gone.
-            // However, resetting selection is important.
-            const page = pages.find(p => p.id === id);
-            if (page && selectedPageId === page.page_id) {
-              setSelectedPageId(null);
-            }
-            fetchData(); // Sync everything
-
-            window.Swal.fire({
-              title: 'Deleted!',
-              text: 'The page has been deleted.',
-              icon: 'success',
-              confirmButtonColor: '#000000'
-            });
-          } else {
-            throw new Error(result.error);
+            window.Swal.fire('Deleted!', 'Page removed.', 'success');
           }
         } catch (error) {
-          window.Swal.fire({
-            title: 'Error',
-            text: error.message || 'Failed to delete page',
-            icon: 'error'
-          });
+          window.Swal.fire('Error', error.message, 'error');
         }
       }
     });
   };
 
-  // Rule handlers
   const handleAddRule = async (ruleData) => {
     try {
-      const response = await fetch('/api/rules', {
+      const result = await apiFetch('/api/rules', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ruleData)
       });
-      const result = await response.json();
-
       if (result.success) {
-        fetchData(); // Refresh rules
-
-        window.Swal.fire({
-          title: 'Rule Added!',
-          text: 'New automation rule has been created.',
-          icon: 'success',
-          confirmButtonColor: '#000000'
-        });
-      } else {
-        throw new Error(result.error);
+        fetchInitialData();
+        window.Swal.fire('Rule Added!', 'Automation created.', 'success');
       }
     } catch (error) {
-      window.Swal.fire({
-        title: 'Error',
-        text: error.message || 'Failed to add rule',
-        icon: 'error'
-      });
+      window.Swal.fire('Error', error.message, 'error');
     }
   };
 
-  const handleDeleteRule = async (id, keyword) => {
-    window.Swal.fire({
-      title: 'Delete Rule?',
-      text: `Are you sure you want to delete the rule for "${keyword}"?`,
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#d33',
-      cancelButtonColor: '#3085d6',
-      confirmButtonText: 'Yes, delete it!'
-    }).then(async (result) => {
-      if (result.isConfirmed) {
-        try {
-          const response = await fetch(`/api/rules/${id}`, { method: 'DELETE' });
-          const result = await response.json();
-
-          if (result.success) {
-            setAllRules(prev => prev.filter(r => r.id !== id));
-
-            window.Swal.fire({
-              title: 'Deleted!',
-              text: 'The rule has been deleted.',
-              icon: 'success',
-              confirmButtonColor: '#000000'
-            });
-          } else {
-            throw new Error(result.error);
-          }
-        } catch (error) {
-          window.Swal.fire({
-            title: 'Error',
-            text: error.message || 'Failed to delete rule',
-            icon: 'error'
-          });
-        }
+  const handleDeleteRule = async (id) => {
+    try {
+      const res = await apiFetch(`/api/rules/${id}`, { method: 'DELETE' });
+      if (res.success) {
+        setAllRules(prev => prev.filter(r => r.id !== id));
+        window.Swal.fire('Deleted!', 'Rule removed.', 'success');
       }
-    });
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+    }
+  };
+
+  const handleUpdateSettings = async (settingsData) => {
+    try {
+      const result = await apiFetch('/api/user/settings', {
+        method: 'PATCH',
+        body: JSON.stringify(settingsData)
+      });
+      if (result.success) {
+        window.Swal.fire('Settings Saved', '', 'success');
+        fetchUserSettings();
+        return true;
+      }
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+      return false;
+    }
   };
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-20" style={{ height: '100vh', background: 'var(--bg-secondary)' }}>
-        <div className="text-center">
-          <i className="fa-solid fa-circle-notch fa-spin fa-3x mb-4 text-secondary"></i>
-          <h2>Loading...</h2>
+        <div style={{ textAlign: 'center' }}>
+          <i className="fa-solid fa-circle-notch fa-spin fa-3x mb-4 opacity-50"></i>
+          <h2 style={{ color: '#888' }}>Fetching your workspace...</h2>
         </div>
       </div>
     );
@@ -278,27 +259,42 @@ function App() {
 
   return (
     <div className="app">
-      <Navbar />
+      <Navbar 
+        onNavigate={setActiveView} 
+        activeView={activeView}
+        onLogout={logout}
+        userEmail={user.email}
+      />
 
       <main className="main-container">
         <div className="container">
-          <PagesSection
-            pages={pages}
-            onAddPage={handleAddPage}
-            onDeletePage={handleDeletePage}
-            onUpdateAI={handleUpdateAI}
-            onUpdateKnowledge={handleUpdateKnowledge}
-            onUpdatePage={handleUpdatePage}
-          />
+          {activeView === 'dashboard' ? (
+            <>
+              <PagesSection
+                pages={pages}
+                onAddPage={handleAddPage}
+                onDeletePage={handleDeletePage}
+                onUpdateAI={handleUpdateAI}
+                onUpdateKnowledge={handleUpdateKnowledge}
+                onUpdatePage={handleUpdatePage}
+              />
 
-          <RulesSection
-            pages={pages}
-            rules={currentRules}
-            selectedPageId={selectedPageId}
-            onSelectPage={setSelectedPageId}
-            onAddRule={handleAddRule}
-            onDeleteRule={handleDeleteRule}
-          />
+              <RulesSection
+                pages={pages}
+                rules={currentRules}
+                selectedPageId={selectedPageId}
+                onSelectPage={setSelectedPageId}
+                onAddRule={handleAddRule}
+                onDeleteRule={handleDeleteRule}
+              />
+            </>
+          ) : (
+            <SettingsPage 
+              settings={userSettings} 
+              onSave={handleUpdateSettings}
+              onBack={() => setActiveView('dashboard')}
+            />
+          )}
         </div>
       </main>
     </div>

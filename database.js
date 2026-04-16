@@ -1,394 +1,434 @@
-import mongoose from "mongoose";
-import dotenv from "dotenv";
-dotenv.config();
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/facebook_automation";
+import { pool, query } from './pg_database.js';
+import bcrypt from 'bcrypt';
 
-console.log("🔄 Connecting to MongoDB...");
-mongoose.connect(MONGODB_URI)
-    .then(() => console.log("✅ Connected to MongoDB"))
-    .catch((err) => console.error("❌ MongoDB connection error:", err));
-const pageSchema = new mongoose.Schema({
-    page_id: {
-        type: String,
-        required: true,
-        unique: true,
-        index: true
-    },
-    page_token: {
-        type: String,
-        required: true
-    },
-    page_name: {
-        type: String,
-        required: true
-    },
-    ai_enabled: {
-        type: Boolean,
-        default: true
-    },
-    ai_instructions: {
-        type: String,
-        default: "أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد."
-    },
-    knowledge_base: {
-        type: String,
-        default: ""
-    },
-    created_at: {
-        type: Date,
-        default: Date.now
-    }
-});
-
-// Transform _id to id for JSON responses
-pageSchema.set('toJSON', {
-    virtuals: true,
-    versionKey: false,
-    transform: (_, ret) => {
-        ret.id = ret._id;
-        delete ret._id;
-    }
-});
-
-/**
- * Rule Schema - Stores keyword-reply mappings per page
- */
-const ruleSchema = new mongoose.Schema({
-    page_id: {
-        type: String,
-        required: true,
-        index: true
-    },
-    keyword: {
-        type: String,
-        required: true
-    },
-    reply: {
-        type: String,
-        required: true
-    },
-    created_at: {
-        type: Date,
-        default: Date.now
-    }
-});
-
-// Transform _id to id for JSON responses
-ruleSchema.set('toJSON', {
-    virtuals: true,
-    versionKey: false,
-    transform: (_, ret) => {
-        ret.id = ret._id;
-        delete ret._id;
-    }
-});
-
-// ==================== MODELS ====================
-
-/**
- * Conversation History Schema - Stores recent messages for AI context
- */
-const conversationSchema = new mongoose.Schema({
-    page_id: {
-        type: String,
-        required: true,
-        index: true
-    },
-    sender_id: {
-        type: String,
-        required: true,
-        index: true
-    },
-    messages: [{
-        role: {
-            type: String,
-            enum: ['user', 'assistant'],
-            required: true
-        },
-        content: {
-            type: String,
-            required: true
-        },
-        timestamp: {
-            type: Date,
-            default: Date.now
-        }
-    }],
-    updated_at: {
-        type: Date,
-        default: Date.now
-    }
-});
-
-// Create compound index for faster lookups
-conversationSchema.index({ page_id: 1, sender_id: 1 });
-
-const Page = mongoose.model("Page", pageSchema);
-const Rule = mongoose.model("Rule", ruleSchema);
-const Conversation = mongoose.model("Conversation", conversationSchema);
-
-// ==================== PAGES OPERATIONS ====================
+// ==================== PAGES ====================
 
 /**
  * Add a new Facebook Page
+ * @returns {{ success: boolean, id?: number, error?: string }}
  */
-export async function addPage(pageId, pageToken, pageName) {
-    try {
-        const page = await Page.create({
-            page_id: pageId,
-            page_token: pageToken,
-            page_name: pageName
-        });
-        // Fire-and-forget: sync to Postgres + pgvector for semantic search
-        import('./sync_to_pg.js').then(mod => mod.upsertPageToPg(page)).catch(err => {
-            console.warn('Background sync to Postgres failed:', err?.message || err);
-        });
+export async function addPage(ownerId, pageId, pageToken, pageName, aiContextLimit = 5) {
+  try {
+    const result = await query(
+      `INSERT INTO pages (owner_id, page_id, page_token, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, created_at)
+       VALUES ($1, $2, $3, $4, true, 'أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد.', '', $5, now())
+       RETURNING id`,
+      [ownerId, pageId, pageToken, pageName, aiContextLimit]
+    );
+    const newPage = result.rows[0];
 
-        return { success: true, id: page._id };
-    } catch (error) {
-        if (error.code === 11000) {
-            return { success: false, error: "Page ID already exists" };
-        }
-        throw error;
+    // Fire-and-forget: generate and store embedding for this page
+    import('./sync_to_pg.js').then(mod => mod.upsertPageEmbedding(pageId, pageName, '')).catch(err => {
+      console.warn('Background embedding sync failed:', err?.message || err);
+    });
+
+    return { success: true, id: newPage.id };
+  } catch (error) {
+    if (error.code === '23505') { // unique_violation
+      return { success: false, error: 'Page ID already exists' };
     }
+    throw error;
+  }
 }
 
 /**
- * Get a specific page by page_id
+ * Get a specific page by page_id (used by webhook handler — no owner filter)
  */
 export async function getPage(pageId) {
-    return await Page.findOne({ page_id: pageId });
+  const result = await query(
+    'SELECT * FROM pages WHERE page_id = $1',
+    [pageId]
+  );
+  return result.rows[0] || null;
 }
 
 /**
- * Get all pages
+ * Get all pages for a specific owner, excluding the token
  */
-export async function getAllPages() {
-    const pages = await Page.find({}, { page_token: 0 }) // Exclude token from results
-        .sort({ created_at: -1 })
-        .lean();
-
-    // Manually transform _id to id
-    return pages.map(page => ({
-        ...page,
-        id: page._id.toString(),
-        _id: undefined
-    }));
+export async function getAllPages(ownerId) {
+  const result = await query(
+    `SELECT id, owner_id, page_id, page_name, ai_enabled, ai_instructions, knowledge_base, created_at
+     FROM pages
+     WHERE owner_id = $1
+     ORDER BY created_at DESC`,
+    [ownerId]
+  );
+  return result.rows;
 }
 
 /**
- * Delete a page by MongoDB _id
+ * Delete a page by its integer id, enforcing owner
+ * Also deletes: rules (via FK cascade), pg embedding, page_documents
  */
-export async function deletePage(id) {
-    const result = await Page.findByIdAndDelete(id);
+export async function deletePage(id, ownerId) {
+  // First, get the page_id so we can clean up page_documents
+  const pageRes = await query(
+    'SELECT page_id FROM pages WHERE id = $1 AND owner_id = $2',
+    [id, ownerId]
+  );
+  if (pageRes.rows.length === 0) return false;
 
-    // Also delete all app rules
-    if (result) {
-        await Rule.deleteMany({ page_id: result.page_id });
-        // Remove from Postgres pages table if present
-        import('./pg_database.js').then(mod => {
-            mod.query('DELETE FROM pages WHERE page_id = $1', [result.page_id]).then(() => {
-                console.log('✅ Removed page from Postgres:', result.page_id);
-            }).catch(err => console.warn('❌ Failed to remove page from Postgres:', err?.message || err));
-        }).catch(err => console.warn('❌ Failed to load pg_database for delete:', err?.message || err));
-    }
+  const { page_id } = pageRes.rows[0];
 
-    return result !== null;
+  // Delete the page (rules cascade automatically via FK)
+  await query('DELETE FROM pages WHERE id = $1 AND owner_id = $2', [id, ownerId]);
+
+  // Clean up page_documents (no FK, delete manually)
+  await query('DELETE FROM page_documents WHERE page_id = $1', [page_id]);
+
+  // Clean up conversations
+  await query('DELETE FROM conversations WHERE page_id = $1', [page_id]);
+
+  console.log(`✅ Deleted page ${page_id} and all related data`);
+  return true;
 }
 
 /**
- * Update page AI settings
+ * Update page AI settings, enforcing owner
  */
-export async function updatePageAI(id, aiEnabled, aiInstructions) {
-    const updateData = {};
+export async function updatePageAI(id, ownerId, aiEnabled, aiInstructions, aiContextLimit) {
+  const setClauses = [];
+  const values = [];
+  let idx = 1;
+ 
+  if (aiEnabled !== undefined) { setClauses.push(`ai_enabled = $${idx++}`); values.push(aiEnabled); }
+  if (aiInstructions !== undefined) { setClauses.push(`ai_instructions = $${idx++}`); values.push(aiInstructions); }
+  if (aiContextLimit !== undefined) { setClauses.push(`ai_context_limit = $${idx++}`); values.push(parseInt(aiContextLimit)); }
 
-    if (aiEnabled !== undefined) updateData.ai_enabled = aiEnabled;
-    if (aiInstructions !== undefined) updateData.ai_instructions = aiInstructions;
+  if (setClauses.length === 0) return false;
 
-    const result = await Page.findByIdAndUpdate(
-        id,
-        updateData,
-        { new: true }
+  values.push(id, ownerId);
+  const result = await query(
+    `UPDATE pages SET ${setClauses.join(', ')} WHERE id = $${idx++} AND owner_id = $${idx++} RETURNING page_id, page_name, ai_instructions`,
+    values
+  );
+
+  if (result.rows.length === 0) return false;
+
+  // Re-sync embedding in background (ai_instructions affects the embedding text)
+  const { page_id, page_name, ai_instructions } = result.rows[0];
+  import('./sync_to_pg.js').then(mod => mod.upsertPageEmbedding(page_id, page_name, ai_instructions)).catch(() => {});
+
+  return true;
+}
+
+/**
+ * Update knowledge base, enforcing owner.
+ * Also re-chunks and re-embeds the knowledge base for RAG.
+ */
+export async function updatePageKnowledge(id, ownerId, knowledgeBase) {
+  const result = await query(
+    `UPDATE pages SET knowledge_base = $1 WHERE id = $2 AND owner_id = $3 RETURNING page_id`,
+    [knowledgeBase, id, ownerId]
+  );
+
+  if (result.rows.length === 0) return false;
+
+  // Re-sync knowledge chunks for RAG (fire-and-forget)
+  const { page_id } = result.rows[0];
+  import('./sync_to_pg.js').then(mod => mod.syncKnowledgeChunksToPg(page_id, knowledgeBase)).catch(err => {
+    console.warn('Background knowledge chunk sync failed:', err?.message || err);
+  });
+
+  return true;
+}
+
+/**
+ * Update page metadata (name, token), enforcing owner
+ */
+export async function updatePage(id, ownerId, pageName, pageToken) {
+  const setClauses = [];
+  const values = [];
+  let idx = 1;
+
+  if (pageName !== undefined)  { setClauses.push(`page_name = $${idx++}`);  values.push(pageName); }
+  if (pageToken !== undefined) { setClauses.push(`page_token = $${idx++}`); values.push(pageToken); }
+
+  if (setClauses.length === 0) return false;
+
+  values.push(id, ownerId);
+  const result = await query(
+    `UPDATE pages SET ${setClauses.join(', ')} WHERE id = $${idx++} AND owner_id = $${idx++} RETURNING page_id, page_name, ai_instructions`,
+    values
+  );
+
+  if (result.rows.length === 0) return false;
+
+  // Re-sync embedding in background
+  const { page_id, page_name, ai_instructions } = result.rows[0];
+  import('./sync_to_pg.js').then(mod => mod.upsertPageEmbedding(page_id, page_name, ai_instructions)).catch(() => {});
+
+  return true;
+}
+
+// ==================== RULES ====================
+
+/**
+ * Add a new keyword rule for a page, verifying ownership via pages table
+ */
+export async function addRule(ownerId, pageId, keyword, reply) {
+  try {
+    // Verify the page exists and belongs to this owner
+    const pageCheck = await query(
+      'SELECT page_id FROM pages WHERE page_id = $1 AND owner_id = $2',
+      [pageId, ownerId]
     );
-
-    if (result) {
-        import('./sync_to_pg.js').then(mod => mod.upsertPageToPg(result)).catch(err => {
-            console.warn('Background sync to Postgres failed (update):', err?.message || err);
-        });
+    if (pageCheck.rows.length === 0) {
+      return { success: false, error: 'Page not found or unauthorized' };
     }
 
-    return result !== null;
+    const result = await query(
+      `INSERT INTO rules (owner_id, page_id, keyword, reply) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [ownerId, pageId, keyword, reply]
+    );
+    return { success: true, id: result.rows[0].id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 }
 
 /**
- * Update page knowledge base
+ * Get rules for a specific page_id
  */
-export async function updatePageKnowledge(id, knowledgeBase) {
-    const result = await Page.findByIdAndUpdate(
-        id,
-        { knowledge_base: knowledgeBase },
-        { new: true }
-    );
-    return result !== null;
-}
-
-/**
- * Update page metadata (name, token)
- */
-export async function updatePage(id, pageName, pageToken) {
-    const updateData = {};
-    if (pageName !== undefined) updateData.page_name = pageName;
-    if (pageToken !== undefined) updateData.page_token = pageToken;
-
-    const result = await Page.findByIdAndUpdate(
-        id,
-        updateData,
-        { new: true }
-    );
-
-    if (result) {
-        // Fire-and-forget: re-sync updated page to Postgres
-        import('./sync_to_pg.js').then(mod => mod.upsertPageToPg(result)).catch(err => {
-            console.warn('Background sync to Postgres failed (updatePage):', err?.message || err);
-        });
-    }
-
-    return result !== null;
-}
-
-export async function addRule(pageId, keyword, reply) {
-    try {
-        const page = await getPage(pageId);
-        if (!page) {
-            return { success: false, error: "Page not found" };
-        }
-
-        const rule = await Rule.create({
-            page_id: pageId,
-            keyword,
-            reply
-        });
-
-        return { success: true, id: rule._id };
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-}
 export async function getRules(pageId) {
-    const rules = await Rule.find({ page_id: pageId })
-        .sort({ created_at: -1 })
-        .lean();
-
-    return rules.map(rule => ({
-        ...rule,
-        id: rule._id.toString(),
-        _id: undefined
-    }));
+  const result = await query(
+    'SELECT * FROM rules WHERE page_id = $1 ORDER BY created_at DESC',
+    [pageId]
+  );
+  return result.rows;
 }
 
 /**
- * Get all rules (for admin dashboard)
+ * Get rules for a page, verifying the requesting user owns that page
  */
-export async function getAllRules() {
-    return await Rule.find({})
-        .sort({ page_id: 1, created_at: -1 })
-        .lean();
+export async function getRulesByPageAndOwner(pageId, ownerId) {
+  // First verify ownership
+  const pageCheck = await query(
+    'SELECT page_id FROM pages WHERE page_id = $1 AND owner_id = $2',
+    [pageId, ownerId]
+  );
+  if (pageCheck.rows.length === 0) return null; // null = unauthorized or not found
+
+  const result = await query(
+    'SELECT * FROM rules WHERE page_id = $1 ORDER BY created_at DESC',
+    [pageId]
+  );
+  return result.rows;
 }
 
 /**
- * Delete a rule by MongoDB _id
+ * Get all rules for a specific owner
  */
-export async function deleteRule(id) {
-    const result = await Rule.findByIdAndDelete(id);
-    return result !== null;
+export async function getAllRules(ownerId) {
+  const result = await query(
+    'SELECT * FROM rules WHERE owner_id = $1 ORDER BY page_id, created_at DESC',
+    [ownerId]
+  );
+  return result.rows;
 }
 
 /**
- * Update a rule
+ * Delete a rule, enforcing owner
  */
-export async function updateRule(id, keyword, reply) {
-    const result = await Rule.findByIdAndUpdate(
-        id,
-        { keyword, reply },
-        { new: true }
+export async function deleteRule(id, ownerId) {
+  const result = await query(
+    'DELETE FROM rules WHERE id = $1 AND owner_id = $2 RETURNING id',
+    [id, ownerId]
+  );
+  return result.rowCount > 0;
+}
+
+/**
+ * Update a rule, enforcing owner
+ */
+export async function updateRule(id, ownerId, keyword, reply) {
+  const result = await query(
+    'UPDATE rules SET keyword = $1, reply = $2 WHERE id = $3 AND owner_id = $4 RETURNING id',
+    [keyword, reply, id, ownerId]
+  );
+  return result.rowCount > 0;
+}
+
+// ==================== CONVERSATIONS ====================
+
+/**
+ * Save a single message to the conversations table.
+ * Automatically trims to keep only the last 10 messages per (page_id, sender_id).
+ */
+export async function saveConversation(pageId, senderId, role, content) {
+  try {
+    await query(
+      `INSERT INTO conversations (page_id, sender_id, role, content) VALUES ($1, $2, $3, $4)`,
+      [pageId, senderId, role, content]
     );
-    return result !== null;
+
+    // Keep only the most recent 10 messages for this conversation
+    await query(
+      `DELETE FROM conversations
+       WHERE page_id = $1 AND sender_id = $2
+         AND id NOT IN (
+           SELECT id FROM conversations
+           WHERE page_id = $1 AND sender_id = $2
+           ORDER BY created_at DESC
+           LIMIT 10
+         )`,
+      [pageId, senderId]
+    );
+  } catch (error) {
+    console.error('Error saving conversation:', error);
+  }
+}
+
+/**
+ * Get the last 5 messages for a conversation (for AI context).
+ * Returns array of { role, content } objects.
+ */
+export async function getConversation(pageId, senderId) {
+  try {
+    const result = await query(
+      `SELECT role, content FROM conversations
+       WHERE page_id = $1 AND sender_id = $2
+       ORDER BY created_at ASC`,
+      [pageId, senderId]
+    );
+    return result.rows; // [{ role: 'user', content: '...' }, ...]
+  } catch (error) {
+    console.error('Error getting conversation:', error);
+    return [];
+  }
+}
+
+/**
+ * Clean conversations older than 24 hours (called by scheduled interval)
+ */
+export async function cleanupConversations() {
+  try {
+    const result = await query(
+      `DELETE FROM conversations WHERE created_at < now() - INTERVAL '24 hours'`
+    );
+    console.log(`🧹 Cleaned up ${result.rowCount} old conversation messages`);
+  } catch (error) {
+    console.error('Error cleaning conversations:', error);
+  }
+}
+
+
+// ==================== USERS & AUTH ====================
+
+/**
+ * Create a new user with a hashed password
+ */
+export async function createUser(email, password) {
+  const passwordHash = await bcrypt.hash(password, 10);
+  // Generate a unique owner_id for multi-tenancy (standardizing on 'user_' prefix)
+  const clerkId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  console.log('  -> DB: Inserting user...', { email, clerkId });
+  const result = await query(
+    `INSERT INTO users (clerk_id, email, password_hash) VALUES ($1, $2, $3) RETURNING id, clerk_id, email, plan`,
+    [clerkId, email, passwordHash]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Find user by email (for login)
+ */
+export async function getUserByEmail(email) {
+  const result = await query(
+    'SELECT id, clerk_id, email, password_hash, plan FROM users WHERE email = $1',
+    [email]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Fetch a user's settings and metadata
+ */
+export async function getUserSettings(ownerId) {
+  const result = await query(
+    'SELECT id, clerk_id, email, plan, openai_api_key, ai_messages_used, ai_messages_reset_at, created_at FROM users WHERE clerk_id = $1',
+    [ownerId]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Update a user's settings
+ */
+export async function updateUserSettings(ownerId, settings) {
+  const { openai_api_key } = settings;
+  const result = await query(
+    `UPDATE users SET openai_api_key = $1 WHERE clerk_id = $2 RETURNING clerk_id`,
+    [openai_api_key, ownerId]
+  );
+  return result.rowCount > 0;
+}
+
+/**
+ * Increment the user's AI message usage count
+ */
+export async function incrementUserUsage(ownerId) {
+  try {
+    await query(
+      'UPDATE users SET ai_messages_used = ai_messages_used + 1 WHERE clerk_id = $1',
+      [ownerId]
+    );
+    return true;
+  } catch (error) {
+    console.error('Error incrementing usage:', error);
+    return false;
+  }
+}
+
+// ==================== REFRESH TOKENS ====================
+
+/**
+ * Save a new refresh token for a user
+ */
+export async function saveRefreshToken(userId, token, expiresAt) {
+  await query(
+    'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+    [userId, token, expiresAt]
+  );
+}
+
+/**
+ * Verify if a refresh token is valid and unexpired
+ */
+export async function verifyRefreshToken(userId, token) {
+  const result = await query(
+    'SELECT id FROM refresh_tokens WHERE user_id = $1 AND token = $2 AND expires_at > now()',
+    [userId, token]
+  );
+  return result.rowCount > 0;
+}
+
+/**
+ * Delete a refresh token (logout)
+ */
+export async function revokeRefreshToken(token) {
+  await query('DELETE FROM refresh_tokens WHERE token = $1', [token]);
+}
+
+/**
+ * Delete all refresh tokens for a user (security reset)
+ */
+export async function revokeAllRefreshTokens(userId) {
+  await query('DELETE FROM refresh_tokens WHERE user_id = $1', [userId]);
 }
 
 // ==================== INITIALIZATION ====================
 
-/**
- * Initialize database (create indexes)
- */
-/**
- * Save or update conversation history
- */
-export async function saveConversation(pageId, senderId, role, content) {
-    try {
-        await Conversation.findOneAndUpdate(
-            { page_id: pageId, sender_id: senderId },
-            {
-                $push: {
-                    messages: {
-                        $each: [{ role, content, timestamp: new Date() }],
-                        $slice: -10 // Keep only last 10 messages
-                    }
-                },
-                $set: { updated_at: new Date() }
-            },
-            { upsert: true, new: true }
-        );
-    } catch (error) {
-        console.error("Error saving conversation:", error);
-    }
-}
-
-/**
- * Get conversation history
- */
-export async function getConversation(pageId, senderId) {
-    try {
-        const conversation = await Conversation.findOne({
-            page_id: pageId,
-            sender_id: senderId
-        }).lean();
-
-        return conversation?.messages || [];
-    } catch (error) {
-        console.error("Error getting conversation:", error);
-        return [];
-    }
-}
-
-/**
- * Clear old conversations (older than 24 hours)
- */
-export async function cleanupConversations() {
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    try {
-        await Conversation.deleteMany({ updated_at: { $lt: oneDayAgo } });
-    } catch (error) {
-        console.error("Error cleaning conversations:", error);
-    }
-}
-
 export async function initDatabase() {
-    try {
-        await Page.createIndexes();
-        await Rule.createIndexes();
-        await Conversation.createIndexes();
-        console.log("✅ Database indexes created");
-
-        // Clean up old conversations daily
-        setInterval(cleanupConversations, 24 * 60 * 60 * 1000);
-    } catch (error) {
-        console.error("❌ Error creating indexes:", error);
-    }
+  try {
+    console.log('✅ PostgreSQL database ready (no index creation needed — handled by migrations)');
+    // Clean up old conversations daily
+    setInterval(cleanupConversations, 24 * 60 * 60 * 1000);
+  } catch (error) {
+    console.error('❌ Error initializing database:', error);
+  }
 }
 
-// Auto-initialize on module load
-mongoose.connection.once("open", () => {
-    initDatabase();
-});
-
-export default mongoose;
+// Auto-initialize on module import
+initDatabase();

@@ -2,7 +2,11 @@ import express from "express";
 import axios from "axios";
 import OpenAI from "openai";
 import dotenv from "dotenv";
+import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
+import bcrypt from 'bcrypt';
 import * as db from "./database.js";
+import { requireAuth } from './middleware/requireAuth.js';
 import { initPgVector, query as pgQuery } from './pg_database.js';
 import { getEmbedding } from './embedding_service.js';
 
@@ -10,14 +14,25 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 dotenv.config();
 
+// Global Crash Diagnostics
+process.on('uncaughtException', (err) => {
+    console.error('🔴 CRITICAL: Uncaught Exception:', err);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🔴 CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
+    process.exit(1);
+});
+
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static("public")); // Serve dashboard files
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "mytoken123";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI;
 
 
 let openai;
@@ -95,103 +110,131 @@ app.post("/webhook", async (req, res) => {
  * Handle incoming message with page-specific rules
  */
 async function handleMessage(pageId, senderId, message) {
+  try {
+    // 1. Get page information from PostgreSQL
+    const page = await db.getPage(pageId);
+    if (!page) {
+      console.log(`⚠️ Page ${pageId} not found in database`);
+      return;
+    }
+
+    console.log(`📄 Processing message for: ${page.page_name}`);
+
+    // 2. Fetch owner's API key if available
+    const ownerSettings = await db.getUserSettings(page.owner_id);
+    const userApiKey = ownerSettings?.openai_api_key;
+    
+    // Create a local OpenAI client if user has their own key
+    let activeOpenai = openai;
+    if (userApiKey) {
+      console.log(`🔑 Using user's personal OpenAI API key for ${page.owner_id}`);
+      activeOpenai = new OpenAI({ apiKey: userApiKey });
+    }
+
+    // 3. Check keyword rules first
+    const rules = await db.getRules(pageId);
+    console.log(`📋 Found ${rules.length} rules for this page`);
+
+    const msgLower = message.toLowerCase();
+    for (const rule of rules) {
+      if (msgLower.includes(rule.keyword.toLowerCase())) {
+        console.log(`✅ Keyword matched: "${rule.keyword}"`);
+        await sendMessage(page.page_token, senderId, rule.reply);
+        return;
+      }
+    }
+
+    // 4. No keyword matched — use AI
+    console.log("🤖 No keyword matched");
+
+    if (!page.ai_enabled || !activeOpenai) {
+      const fallback = page.ai_enabled
+        ? "شكراً لرسالتك! سيتم الرد عليك قريباً."
+        : "شكراً لرسالتك! سيتم الرد عليك من قبل فريق الدعم قريباً.";
+      await sendMessage(page.page_token, senderId, fallback);
+      return;
+    }
+
     try {
-        // 1. Get page information from database
-        const page = await db.getPage(pageId);
+      console.log("🧠 Using AI with RAG...");
 
+      // 4a. RAG — find top 3 most relevant knowledge chunks for this message
+      let knowledgeContext = '';
+      if (page.knowledge_base && page.knowledge_base.trim().length > 0) {
+        try {
+          // Pass userApiKey to getEmbedding so it uses their quota
+          const qEmbedding = await getEmbedding(message, userApiKey);
+          const vecLiteral = '[' + qEmbedding.join(',') + ']';
 
-        if (!page) {
-            console.log(`⚠️ Page ${pageId} not found in database`);
-            return;
+          const ragResult = await pgQuery(
+            `SELECT content, 1 - (embedding <#> $1::vector) AS score
+             FROM page_documents
+             WHERE page_id = $2 AND doc_type = 'knowledge_chunk' AND embedding IS NOT NULL
+             ORDER BY embedding <#> $1::vector
+             LIMIT 3`,
+            [vecLiteral, pageId]
+          );
+
+          if (ragResult.rows.length > 0) {
+            const chunks = ragResult.rows.map(r => r.content).join('\n\n---\n\n');
+            knowledgeContext = `\n\n📚 معلومات ذات صلة:\n${chunks}`;
+            console.log(`📎 RAG: injected ${ragResult.rows.length} chunks`);
+          }
+        } catch (ragErr) {
+          // If RAG fails, fall back to no knowledge context rather than crashing
+          console.warn('⚠️ RAG lookup failed, continuing without knowledge:', ragErr.message);
         }
+      }
 
-        console.log(`📄 Processing message for: ${page.page_name}`);
+      // 4b. Get conversation messages for context (limited by page settings)
+      const contextLimit = page.ai_context_limit || 5;
+      const historyRes = await db.getConversation(pageId, senderId);
+      const history = historyRes.slice(-contextLimit);
+      console.log(`💬 Context: sending last ${history.length} messages to AI`);
 
-        // 2. Get all rules for this page
-        const rules = await db.getRules(pageId);
+      // 4c. Build the prompt
+      const systemPrompt =
+        `أنت مساعد خدمة عملاء لصفحة "${page.page_name}" على فيسبوك.` +
+        `${knowledgeContext}\n\n` +
+        `التعليمات: ${page.ai_instructions || 'أجب بشكل محترف ومفيد.'}\n` +
+        `ملاحظة: رد بنفس لغة العميل.`;
 
-        console.log(`📋 Found ${rules.length} rules for this page`);
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...history,
+        { role: "user", content: message }
+      ];
 
-        // 3. Check if message matches any keyword
-        const msgLower = message.toLowerCase();
+      const gptReply = await activeOpenai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages,
+        temperature: 0.7,
+        max_tokens: 250
+      });
 
-        for (const rule of rules) {
-            const keywordLower = rule.keyword.toLowerCase();
+      const aiResponse = gptReply.choices[0].message.content;
 
-            if (msgLower.includes(keywordLower)) {
-                console.log(`✅ Keyword matched: "${rule.keyword}"`);
-                await sendMessage(page.page_token, senderId, rule.reply);
-                return; // Stop after first match
-            }
-        }
+      // 4d. Save both messages in conversation history
+      await db.saveConversation(pageId, senderId, "user", message);
+      await db.saveConversation(pageId, senderId, "assistant", aiResponse);
 
-        // 4. No keyword matched - use OpenAI fallback (if configured)
-        console.log("🤖 No keyword matched");
+      await sendMessage(page.page_token, senderId, aiResponse);
+      console.log("✅ AI response sent");
 
-        // Check if AI is enabled for this page
-        if (page.ai_enabled && openai) {
-            try {
-                console.log("🧠 Using AI model for response...");
-
-                // Get conversation history for context
-                const history = await db.getConversation(pageId, senderId);
-
-                // Build messages array with system prompt and history
-                const knowledgeSection = page.knowledge_base
-                    ? `\n\n📚 معلومات الصفحة والأعمال (استخدم هذه المعلومات للإجابة على الأسئلة):\n${page.knowledge_base}`
-                    : '';
-
-                const messages = [
-                    {
-                        role: "system",
-                        content: `أنت مساعد خدمة عملاء لصفحة "${page.page_name}" على فيسبوك.${knowledgeSection}\n\nتعليمات:\n${page.ai_instructions || 'قم بالرد بشكل محترف ومفيد على استفسارات العملاء.'}\n\nملاحظة: احرص على الرد بنفس لغة العميل (عربي أو إنجليزي). استخدم دائماً المعلومات المتاحة لك للإجابة بدقة.`
-                    },
-                    ...history,
-                    { role: "user", content: message }
-                ];
-
-                const gptReply = await openai.chat.completions.create({
-                    model: "gpt-4o-mini",
-                    messages: messages,
-                    temperature: 0.7,
-                    max_tokens: 500
-                });
-
-                const aiResponse = gptReply.choices[0].message.content;
-
-                // Save conversation history
-                await db.saveConversation(pageId, senderId, "user", message);
-                await db.saveConversation(pageId, senderId, "assistant", aiResponse);
-
-                await sendMessage(page.page_token, senderId, aiResponse);
-                console.log("✅ AI response sent successfully");
-            } catch (error) {
-                console.error("❌ OpenAI error:", error.message);
-                await sendMessage(
-                    page.page_token,
-                    senderId,
-                    "عذراً، حدث خطأ مؤقت. يرجى إعادة المحاولة أو التواصل مع فريق الدعم."
-                );
-            }
-        } else if (!page.ai_enabled) {
-            console.log("⚠️ AI is disabled for this page");
-            await sendMessage(
-                page.page_token,
-                senderId,
-                "شكراً لرسالتك! سيتم الرد عليك من قبل فريق الدعم قريباً."
-            );
-        } else {
-            console.log("⚠️ OpenAI not configured");
-            await sendMessage(
-                page.page_token,
-                senderId,
-                "شكراً لرسالتك! سيتم الرد عليك قريباً."
-            );
-        }
+      // 4e. Increment user usage count
+      await db.incrementUserUsage(page.owner_id);
 
     } catch (error) {
-        console.error("❌ Error handling message:", error);
+      console.error("❌ OpenAI error:", error.message);
+      await sendMessage(
+        page.page_token, senderId,
+        "عذراً، حدث خطأ مؤقت. يرجى المحاولة لاحقاً."
+      );
     }
+
+  } catch (error) {
+    console.error("❌ Error handling message:", error);
+  }
 }
 
 async function sendMessage(pageToken, senderId, text) {
@@ -209,7 +252,153 @@ async function sendMessage(pageToken, senderId, text) {
     }
 }
 
+// ==================== AUTHENTICATION ====================
+
+const ACCESS_TOKEN_EXPIRY = '15m';
+const REFRESH_TOKEN_EXPIRY_DAYS = 7;
+
+function generateAccessToken(user) {
+    return jwt.sign(
+        { id: user.id, userId: user.clerk_id, email: user.email, plan: user.plan },
+        process.env.JWT_ACCESS_SECRET,
+        { expiresIn: ACCESS_TOKEN_EXPIRY }
+    );
+}
+
+function generateRefreshToken(user) {
+    return jwt.sign(
+        { id: user.id, userId: user.clerk_id },
+        process.env.JWT_REFRESH_SECRET,
+        { expiresIn: `${REFRESH_TOKEN_EXPIRY_DAYS}d` }
+    );
+}
+
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        console.log(`📝 Registration attempt for: ${email}`);
+        
+        if (!email || !password) {
+            console.log('❌ Registration failed: Missing email or password');
+            return res.status(400).json({ success: false, error: 'Email and password required' });
+        }
+
+        const existing = await db.getUserByEmail(email);
+        if (existing) {
+            console.log(`❌ Registration failed: User ${email} already exists`);
+            return res.status(400).json({ success: false, error: 'User already exists' });
+        }
+
+        console.log('⏳ Creating user in database...');
+        const user = await db.createUser(email, password);
+        console.log(`✅ User created with ID: ${user.id}`);
+        
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
+        
+        console.log('⏳ Saving refresh token...');
+        await db.saveRefreshToken(user.id, refreshToken, expiresAt);
+        console.log('✅ Refresh token saved');
+
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+        });
+
+        console.log('🎉 Registration successful');
+        res.json({ success: true, user, accessToken });
+    } catch (error) {
+        console.error('❌ Registration Error:', error);
+        res.status(500).json({ success: false, error: error.message || 'Internal Server Error' });
+    }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        console.log(`🔑 Login attempt for: ${email}`);
+        
+        const user = await db.getUserByEmail(email);
+        
+        if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+            console.log(`❌ Login failed for: ${email}`);
+            return res.status(401).json({ success: false, error: 'Invalid email or password' });
+        }
+
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
+        await db.saveRefreshToken(user.id, refreshToken, expiresAt);
+
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+        });
+
+        console.log(`✅ Login successful for: ${email}`);
+        res.json({ success: true, user: { id: user.id, userId: user.clerk_id, email: user.email, plan: user.plan }, accessToken });
+    } catch (error) {
+        console.error('❌ Login Error:', error);
+        res.status(500).json({ success: false, error: error.message || 'Internal Server Error' });
+    }
+});
+
+app.post('/api/auth/refresh', async (req, res) => {
+    try {
+        const refreshToken = req.cookies.refreshToken;
+        if (!refreshToken) return res.status(401).json({ success: false, error: 'No refresh token' });
+
+        const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+        const isValid = await db.verifyRefreshToken(decoded.id, refreshToken);
+
+        if (!isValid) return res.status(401).json({ success: false, error: 'Invalid refresh token' });
+
+        const user = await db.getUserSettings(decoded.userId);
+        if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+        const newAccessToken = generateAccessToken(user);
+        const newRefreshToken = generateRefreshToken(user);
+
+        await db.revokeRefreshToken(refreshToken);
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
+        await db.saveRefreshToken(user.id, newRefreshToken, expiresAt);
+
+        res.cookie('refreshToken', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+        });
+
+        res.json({ success: true, accessToken: newAccessToken, user });
+    } catch (error) {
+        res.status(401).json({ success: false, error: 'Session expired' });
+    }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+        await db.revokeRefreshToken(refreshToken);
+    }
+    res.clearCookie('refreshToken');
+    res.json({ success: true });
+});
+
 // ==================== API ENDPOINTS FOR DASHBOARD ====================
+
+// Apply authentication to all /api routes below this line
+app.use("/api", requireAuth);
 
 /**
  * Get all pages
@@ -217,7 +406,7 @@ async function sendMessage(pageToken, senderId, text) {
  */
 app.get("/api/pages", async (req, res) => {
     try {
-        const pages = await db.getAllPages();
+        const pages = await db.getAllPages(req.userId);
         res.json({ success: true, data: pages });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -233,28 +422,24 @@ app.post('/api/search/vector', async (req, res) => {
     try {
         const { query } = req.body;
         const top_k = Number(req.body.top_k || 10);
+        const owner_id = req.userId;
 
         if (!query) return res.status(400).json({ success: false, error: 'Missing query' });
         if (!process.env.OPENAI_API_KEY) return res.status(500).json({ success: false, error: 'OpenAI not configured' });
 
-        // 1. Embed the query
         const qEmbedding = await getEmbedding(query);
-
-        // Convert to Postgres vector literal: e.g. '[0.1,0.2, ...]'
         const vecLiteral = '[' + qEmbedding.join(',') + ']';
 
-        // 2. Run pgvector ANN search (cosine via vector_cosine_ops)
         const sql = `
             SELECT id, page_id, page_name, created_at,
                    1 - (embedding <#> $1::vector) AS score
             FROM pages
-            WHERE embedding IS NOT NULL
+            WHERE embedding IS NOT NULL AND owner_id = $3
             ORDER BY embedding <#> $1::vector
             LIMIT $2
         `;
 
-        const result = await pgQuery(sql, [vecLiteral, top_k]);
-
+        const result = await pgQuery(sql, [vecLiteral, top_k, owner_id]);
         return res.json({ success: true, data: result.rows });
     } catch (error) {
         console.error('Vector search error:', error);
@@ -262,15 +447,11 @@ app.post('/api/search/vector', async (req, res) => {
     }
 });
 
-/**
- * Document-level vector search
- * POST /api/search/documents
- * Body: { query: string, top_k?: number }
- */
 app.post('/api/search/documents', async (req, res) => {
     try {
         const { query } = req.body;
         const top_k = Number(req.body.top_k || 10);
+        const owner_id = req.userId;
 
         if (!query) return res.status(400).json({ success: false, error: 'Missing query' });
         if (!process.env.OPENAI_API_KEY) return res.status(500).json({ success: false, error: 'OpenAI not configured' });
@@ -283,12 +464,12 @@ app.post('/api/search/documents', async (req, res) => {
                    1 - (pd.embedding <#> $1::vector) AS score
             FROM page_documents pd
             LEFT JOIN pages p ON p.page_id = pd.page_id
-            WHERE pd.embedding IS NOT NULL
+            WHERE pd.embedding IS NOT NULL AND p.owner_id = $3
             ORDER BY pd.embedding <#> $1::vector
             LIMIT $2
         `;
 
-        const result = await pgQuery(sql, [vecLiteral, top_k]);
+        const result = await pgQuery(sql, [vecLiteral, top_k, owner_id]);
         return res.json({ success: true, data: result.rows });
     } catch (err) {
         console.error('Document search error:', err);
@@ -296,26 +477,19 @@ app.post('/api/search/documents', async (req, res) => {
     }
 });
 
-/**
- * Add a new page
- * POST /api/pages
- * Body: { page_id, page_token, page_name }
- */
 app.post("/api/pages", async (req, res) => {
     try {
         const { page_id, page_token, page_name } = req.body;
+        const owner_id = req.userId;
 
         if (!page_id || !page_token || !page_name) {
-            return res.status(400).json({
-                success: false,
-                error: "Missing required fields: page_id, page_token, page_name",
-            });
+            return res.status(400).json({ success: false, error: "Missing required fields" });
         }
 
-        const result = await db.addPage(page_id, page_token, page_name);
+        const result = await db.addPage(owner_id, page_id, page_token, page_name);
 
         if (result.success) {
-            res.json({ success: true, message: "Page added successfully", id: result.id });
+            res.json({ success: true, id: result.id });
         } else {
             res.status(400).json({ success: false, error: result.error });
         }
@@ -324,185 +498,130 @@ app.post("/api/pages", async (req, res) => {
     }
 });
 
-/**
- * Update page metadata (name, token)
- * PUT /api/pages/:id
- * Body: { page_name?, page_token? }
- */
 app.put('/api/pages/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { page_name, page_token } = req.body;
+        const owner_id = req.userId;
 
-        if (page_name === undefined && page_token === undefined) {
-            return res.status(400).json({ success: false, error: 'No fields to update' });
-        }
-
-        const success = await db.updatePage(id, page_name, page_token);
-
-        if (success) {
-            res.json({ success: true, message: 'Page updated and synced' });
-        } else {
-            res.status(404).json({ success: false, error: 'Page not found' });
-        }
+        const success = await db.updatePage(id, owner_id, page_name, page_token);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Delete a page
- * DELETE /api/pages/:id
- */
 app.delete("/api/pages/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        const success = await db.deletePage(id);
-
-        if (success) {
-            res.json({ success: true, message: "Page deleted successfully" });
-        } else {
-            res.status(404).json({ success: false, error: "Page not found" });
-        }
+        const owner_id = req.userId;
+        const success = await db.deletePage(id, owner_id);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Update page AI settings
- * PUT /api/pages/:id/ai
- * Body: { ai_enabled, ai_instructions }
- */
 app.put("/api/pages/:id/ai", async (req, res) => {
     try {
         const { id } = req.params;
-        const { ai_enabled, ai_instructions } = req.body;
-
-        const success = await db.updatePageAI(id, ai_enabled, ai_instructions);
-
-        if (success) {
-            res.json({ success: true, message: "AI settings updated successfully" });
-        } else {
-            res.status(404).json({ success: false, error: "Page not found" });
-        }
+        const { ai_enabled, ai_instructions, ai_context_limit } = req.body;
+        const owner_id = req.userId;
+        const success = await db.updatePageAI(id, owner_id, ai_enabled, ai_instructions, ai_context_limit);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Update page knowledge base
- * PUT /api/pages/:id/knowledge
- * Body: { knowledge_base: string }
- */
 app.put("/api/pages/:id/knowledge", async (req, res) => {
     try {
         const { id } = req.params;
         const { knowledge_base } = req.body;
-
-        if (knowledge_base === undefined) {
-            return res.status(400).json({ success: false, error: "Missing knowledge_base field" });
-        }
-
-        const success = await db.updatePageKnowledge(id, knowledge_base);
-
-        if (success) {
-            res.json({ success: true, message: "Knowledge base updated successfully" });
-        } else {
-            res.status(404).json({ success: false, error: "Page not found" });
-        }
+        const owner_id = req.userId;
+        const success = await db.updatePageKnowledge(id, owner_id, knowledge_base);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Get rules (optionally filtered by page_id)
- * GET /api/rules?page_id=XXX
- */
 app.get("/api/rules", async (req, res) => {
     try {
         const { page_id } = req.query;
-
-        const rules = page_id ? await db.getRules(page_id) : await db.getAllRules();
+        let rules;
+        if (page_id) {
+            rules = await db.getRulesByPageAndOwner(page_id, req.userId);
+        } else {
+            rules = await db.getAllRules(req.userId);
+        }
         res.json({ success: true, data: rules });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Add a new rule
- * POST /api/rules
- * Body: { page_id, keyword, reply }
- */
 app.post("/api/rules", async (req, res) => {
     try {
         const { page_id, keyword, reply } = req.body;
-
-        if (!page_id || !keyword || !reply) {
-            return res.status(400).json({
-                success: false,
-                error: "Missing required fields: page_id, keyword, reply",
-            });
-        }
-
-        const result = await db.addRule(page_id, keyword, reply);
-
-        if (result.success) {
-            res.json({ success: true, message: "Rule added successfully", id: result.id });
-        } else {
-            res.status(400).json({ success: false, error: result.error });
-        }
+        const owner_id = req.userId;
+        const result = await db.addRule(owner_id, page_id, keyword, reply);
+        if (result.success) res.json({ success: true, id: result.id });
+        else res.status(400).json({ success: false, error: result.error });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Update a rule
- * PUT /api/rules/:id
- * Body: { keyword, reply }
- */
 app.put("/api/rules/:id", async (req, res) => {
     try {
         const { id } = req.params;
         const { keyword, reply } = req.body;
-
-        if (!keyword || !reply) {
-            return res.status(400).json({
-                success: false,
-                error: "Missing required fields: keyword, reply",
-            });
-        }
-
-        const success = await db.updateRule(id, keyword, reply);
-
-        if (success) {
-            res.json({ success: true, message: "Rule updated successfully" });
-        } else {
-            res.status(404).json({ success: false, error: "Rule not found" });
-        }
+        const owner_id = req.userId;
+        const success = await db.updateRule(id, owner_id, keyword, reply);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Delete a rule
- * DELETE /api/rules/:id
- */
 app.delete("/api/rules/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        const success = await db.deleteRule(id);
+        const owner_id = req.userId;
+        const success = await db.deleteRule(id, owner_id);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
-        if (success) {
-            res.json({ success: true, message: "Rule deleted successfully" });
-        } else {
-            res.status(404).json({ success: false, error: "Rule not found" });
+app.get("/api/user/settings", async (req, res) => {
+    try {
+        const settings = await db.getUserSettings(req.userId);
+        if (!settings) return res.status(404).json({ success: false, error: 'Not found' });
+        const isUsingSystemKey = !settings.openai_api_key;
+        res.json({ success: true, data: { ...settings, is_using_system_key: isUsingSystemKey } });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.patch("/api/user/settings", async (req, res) => {
+    try {
+        const { openai_api_key } = req.body;
+        if (openai_api_key && openai_api_key.includes('...')) {
+            return res.json({ success: true, message: 'No changes made' });
         }
+        const success = await db.updateUserSettings(req.userId, { openai_api_key });
+        if (success) res.json({ success: true });
+        else res.status(400).json({ success: false, error: 'Failed' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -512,15 +631,6 @@ app.delete("/api/rules/:id", async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`\n🎉 Server running on http://localhost:${PORT}`);
-    console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard.html`);
-    console.log(`🔗 Webhook URL: http://localhost:${PORT}/webhook\n`);
 });
-
-// Export app for testing (do not start server when running tests)
-if (process.env.NODE_ENV !== 'test') {
-    // server already started above in normal runs
-} else {
-    console.log('🧪 Running in test mode; server.listen suppressed');
-}
 
 export default app;
