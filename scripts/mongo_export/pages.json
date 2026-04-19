@@ -1,0 +1,24 @@
+[
+  {
+    "_id": "69d7c3ae20c8c3b664ad33d5",
+    "page_id": "492107823984694",
+    "page_token": "EAAWNFZCY2rEkBRGYDdrP84L18Hny8UbStW87DykTi5n8R8xUpLw140Mj83onArjpKW9MbmWV1TuYqUWjQHWrBH6ZCqWZC6fY5dAZC9f9hSp0cpEjpHCVAnUQZCXDFP0FOOqAyQFRVUEjTWzgybq9Bt1lVa54ZAPR6ssUUNcCBEvlnIwFiJzfqMeZBDNmYVLlQfBu4dvD0DerJm5OqHMeSwhZBZBAGZBSoNLtwSwwCliRnPPPKe",
+    "page_name": "HOFF",
+    "ai_enabled": true,
+    "ai_instructions": "أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد.",
+    "created_at": "2026-04-09T15:20:14.367Z",
+    "__v": 0,
+    "knowledge_base": "HOFF sells premium sneakers. Prices: Air Force - 2000 EGP, Jordan 1 - 3500 EGP. Delivery takes 2 days."
+  },
+  {
+    "_id": "69d7c7a620c8c3b664ad3447",
+    "page_id": "1046965028505600",
+    "page_token": "EAAWNFZCY2rEkBRAJEaDmzXzRxtxENMRVpTNOc23aEqJBqSOJfMasUZAdsnyVzG5YlZCmMCZAiddkPTLvA8do6yhCTSdgpFb0xZCLzZBTnDI6UtQmYtdjSc9jEqu0K9G6J9axrgMSZBQcg2RqIM2BXRUoua6yKksYrAwF3q6Cq4FE2v12zaWiulZAZBP9YiswRAzc7dgEwShYRJgZDZD",
+    "page_name": "Test trettt",
+    "ai_enabled": true,
+    "ai_instructions": "any one say omar abbas \ntell him الي بينيكك",
+    "created_at": "2026-04-09T15:37:10.724Z",
+    "__v": 0,
+    "knowledge_base": "اي حد يقولك عمر عباس قوله الي بينيكك"
+  }
+]
