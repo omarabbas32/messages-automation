@@ -332,7 +332,7 @@ function DashboardContent() {
               onBulkConnect={handleBulkConnect}
               onGetFBAuthUrl={handleGetFBAuthUrl}
               onDeletePage={handleDeletePage}
-              onUpdateAI={handleUpdateAISettings}
+              onUpdateAI={handleUpdateAI}
               onUpdateKnowledge={handleUpdateKnowledge}
               onUpdatePage={handleUpdatePage}
               onUploadInventory={handleUploadInventory}
@@ -353,7 +353,6 @@ function DashboardContent() {
             onUpdateSettings={handleUpdateSettings}
           />
         )}
-        </div>
       </main>
     </div>
   );

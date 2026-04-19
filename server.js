@@ -610,7 +610,7 @@ app.post("/api/pages/:pageId/inventory/upload", requireAuth, upload.single('file
         const ownerId = req.userId;
 
         // 1. Verify page ownership
-        const page = await db.getPage(pageId);
+        const page = await db.getPageById(pageId);
         if (!page || page.owner_id !== ownerId) {
             return res.status(403).json({ success: false, error: "Unauthorized or page not found" });
         }
@@ -621,7 +621,8 @@ app.post("/api/pages/:pageId/inventory/upload", requireAuth, upload.single('file
 
         // 2. Process the Excel file
         console.log(`🚀 Starting inventory import for Page ${pageId} (${page.page_name})`);
-        const result = await processExcelInventory(pageId, req.file.buffer);
+        // Use page.page_id (Facebook ID) for storing documents
+        const result = await processExcelInventory(page.page_id, req.file.buffer);
 
         res.json({ 
             success: true, 
@@ -869,8 +870,14 @@ app.use((req, res) => {
 app.listen(PORT, async () => {
   console.log(`\n🎉 SaaS Gateway running on port ${PORT}`);
   console.log(`🔗 Webhook: ${process.env.FB_REDIRECT_URI.replace('/api/auth/facebook/callback', '')}/webhook`);
-  await db.initDatabase();
-  await initPgVector();
+  
+  try {
+    await db.initDatabase();
+    await initPgVector();
+  } catch (err) {
+    console.error('❌ Database initialization failed:', err.message);
+    console.warn('⚠️ Server is running but database-dependent features will fail.');
+  }
 });
 
 export default app;

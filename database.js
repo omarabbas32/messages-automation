@@ -48,6 +48,17 @@ export async function getPage(pageId) {
 }
 
 /**
+ * Get a specific page by internal serial id
+ */
+export async function getPageById(id) {
+  const result = await query(
+    'SELECT * FROM pages WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+/**
  * Get all pages for a specific owner, excluding the token
  */
 export async function getAllPages(ownerId) {
