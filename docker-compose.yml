@@ -4,8 +4,8 @@ services:
   app:
     build: .
     container_name: wink-webhook-app
-    ports:
-      - "${PORT:-3000}:3000"
+    # ports:
+    #   - "${PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
