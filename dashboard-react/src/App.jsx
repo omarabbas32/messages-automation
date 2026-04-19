@@ -47,8 +47,13 @@ function DashboardContent() {
         const headers = {
             ...options.headers,
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
         };
+        
+        // Don't set Content-Type if we're sending FormData (let browser set boundary)
+        if (!(options.body instanceof FormData)) {
+            headers['Content-Type'] = 'application/json';
+        }
+        
         return fetch(url, { ...options, headers });
     };
 
@@ -180,6 +185,48 @@ function DashboardContent() {
     }
   };
 
+  const handleBulkConnect = async (pages) => {
+    try {
+      const result = await apiFetch('/api/pages/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ pages })
+      });
+
+      if (result.success) {
+        fetchInitialData();
+        window.Swal.fire({ 
+            title: 'Success!', 
+            text: `${pages.length} pages connected and automated.`, 
+            icon: 'success' 
+        });
+        return true;
+      }
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+      return false;
+    }
+  };
+
+  const handleUploadInventory = async (pageId, file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const result = await apiFetch(`/api/pages/${pageId}/inventory/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (result.success) {
+        window.Swal.fire('Inventory Refreshed!', result.message, 'success');
+        return true;
+      }
+    } catch (error) {
+      window.Swal.fire('Upload Failed', error.message, 'error');
+      return false;
+    }
+  };
+
   const handleDeletePage = async (id, name) => {
     window.Swal.fire({
       title: 'Are you sure?',
@@ -246,6 +293,16 @@ function DashboardContent() {
     }
   };
 
+  const handleGetFBAuthUrl = async () => {
+    try {
+      const result = await apiFetch('/api/auth/facebook/url');
+      return result.success ? result.url : null;
+    } catch (error) {
+      console.error('Failed to get FB Auth URL:', error);
+      return null;
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-20" style={{ height: '100vh', background: 'var(--bg-secondary)' }}>
@@ -266,35 +323,36 @@ function DashboardContent() {
         userEmail={user.email}
       />
 
-      <main className="main-container">
-        <div className="container">
-          {activeView === 'dashboard' ? (
-            <>
-              <PagesSection
-                pages={pages}
-                onAddPage={handleAddPage}
-                onDeletePage={handleDeletePage}
-                onUpdateAI={handleUpdateAI}
-                onUpdateKnowledge={handleUpdateKnowledge}
-                onUpdatePage={handleUpdatePage}
-              />
-
-              <RulesSection
-                pages={pages}
-                rules={currentRules}
-                selectedPageId={selectedPageId}
-                onSelectPage={setSelectedPageId}
-                onAddRule={handleAddRule}
-                onDeleteRule={handleDeleteRule}
-              />
-            </>
-          ) : (
-            <SettingsPage 
-              settings={userSettings} 
-              onSave={handleUpdateSettings}
-              onBack={() => setActiveView('dashboard')}
+      <main className="content">
+        {activeView === 'dashboard' ? (
+          <>
+            <PagesSection 
+              pages={pages} 
+              onAddPage={handleAddPage}
+              onBulkConnect={handleBulkConnect}
+              onGetFBAuthUrl={handleGetFBAuthUrl}
+              onDeletePage={handleDeletePage}
+              onUpdateAI={handleUpdateAISettings}
+              onUpdateKnowledge={handleUpdateKnowledge}
+              onUpdatePage={handleUpdatePage}
+              onUploadInventory={handleUploadInventory}
             />
-          )}
+
+            <RulesSection
+              pages={pages}
+              rules={allRules}
+              selectedPageId={selectedPageId}
+              onSelectPage={setSelectedPageId}
+              onAddRule={handleAddRule}
+              onDeleteRule={handleDeleteRule}
+            />
+          </>
+        ) : (
+          <SettingsPage 
+            settings={userSettings} 
+            onUpdateSettings={handleUpdateSettings}
+          />
+        )}
         </div>
       </main>
     </div>

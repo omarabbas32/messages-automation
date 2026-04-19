@@ -12,6 +12,11 @@ export async function addPage(ownerId, pageId, pageToken, pageName, aiContextLim
     const result = await query(
       `INSERT INTO pages (owner_id, page_id, page_token, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, created_at)
        VALUES ($1, $2, $3, $4, true, 'أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد.', '', $5, now())
+       ON CONFLICT (page_id) DO UPDATE SET 
+         page_token = EXCLUDED.page_token,
+         page_name = EXCLUDED.page_name,
+         owner_id = EXCLUDED.owner_id,
+         created_at = now()
        RETURNING id`,
       [ownerId, pageId, pageToken, pageName, aiContextLimit]
     );
@@ -347,7 +352,11 @@ export async function getUserByEmail(email) {
  */
 export async function getUserSettings(ownerId) {
   const result = await query(
-    'SELECT id, clerk_id, email, plan, openai_api_key, ai_messages_used, ai_messages_reset_at, created_at FROM users WHERE clerk_id = $1',
+    `SELECT id, clerk_id, email, plan, openai_api_key, 
+            display_name, ai_default_model, ai_default_temperature, 
+            ai_default_max_tokens, ai_global_instructions,
+            ai_messages_used, ai_tokens_used, ai_messages_reset_at, created_at 
+     FROM users WHERE clerk_id = $1`,
     [ownerId]
   );
   return result.rows[0] || null;
@@ -357,22 +366,52 @@ export async function getUserSettings(ownerId) {
  * Update a user's settings
  */
 export async function updateUserSettings(ownerId, settings) {
-  const { openai_api_key } = settings;
+  const { 
+    openai_api_key, display_name, ai_default_model, 
+    ai_default_temperature, ai_default_max_tokens, ai_global_instructions 
+  } = settings;
+
+  const setClauses = [];
+  const values = [];
+  let idx = 1;
+
+  if (openai_api_key !== undefined) { setClauses.push(`openai_api_key = $${idx++}`); values.push(openai_api_key); }
+  if (display_name !== undefined) { setClauses.push(`display_name = $${idx++}`); values.push(display_name); }
+  if (ai_default_model !== undefined) { setClauses.push(`ai_default_model = $${idx++}`); values.push(ai_default_model); }
+  if (ai_default_temperature !== undefined) { setClauses.push(`ai_default_temperature = $${idx++}`); values.push(parseFloat(ai_default_temperature)); }
+  if (ai_default_max_tokens !== undefined) { setClauses.push(`ai_default_max_tokens = $${idx++}`); values.push(parseInt(ai_default_max_tokens)); }
+  if (ai_global_instructions !== undefined) { setClauses.push(`ai_global_instructions = $${idx++}`); values.push(ai_global_instructions); }
+
+  if (setClauses.length === 0) return false;
+
+  values.push(ownerId);
   const result = await query(
-    `UPDATE users SET openai_api_key = $1 WHERE clerk_id = $2 RETURNING clerk_id`,
-    [openai_api_key, ownerId]
+    `UPDATE users SET ${setClauses.join(', ')} WHERE clerk_id = $${idx} RETURNING clerk_id`,
+    values
   );
   return result.rowCount > 0;
 }
 
 /**
- * Increment the user's AI message usage count
+ * Update user password
  */
-export async function incrementUserUsage(ownerId) {
+export async function updateUserPassword(ownerId, newPassword) {
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  const result = await query(
+    'UPDATE users SET password_hash = $1 WHERE clerk_id = $2',
+    [passwordHash, ownerId]
+  );
+  return result.rowCount > 0;
+}
+
+/**
+ * Increment the user's AI message and token usage count
+ */
+export async function incrementUserUsage(ownerId, tokensUsed = 0) {
   try {
     await query(
-      'UPDATE users SET ai_messages_used = ai_messages_used + 1 WHERE clerk_id = $1',
-      [ownerId]
+      'UPDATE users SET ai_messages_used = ai_messages_used + 1, ai_tokens_used = ai_tokens_used + $1 WHERE clerk_id = $2',
+      [tokensUsed, ownerId]
     );
     return true;
   } catch (error) {

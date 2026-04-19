@@ -93,6 +93,140 @@
     display: block;
 }
 
+.header-actions {
+    display: flex;
+    gap: var(--spacing-md);
+}
+
+.btn-facebook {
+    background: #1877F2;
+    color: white;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: background 0.2s;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-facebook:hover {
+    background: #166fe5;
+}
+
+.btn-facebook:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* Discovery Modal */
+.discovery-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.discovery-modal {
+    background: var(--bg-primary);
+    width: 600px;
+    max-width: 90vw;
+    border-radius: 20px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    max-height: 80vh;
+}
+
+.modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.close-modal {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.discovered-pages-list {
+    padding: 16px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.discovered-page-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.discovered-page-item:hover {
+    background: var(--bg-secondary);
+}
+
+.discovered-page-item.selected {
+    border-color: var(--secondary-color);
+    background: rgba(100, 255, 218, 0.05);
+}
+
+.page-check {
+    font-size: 1.25rem;
+    color: var(--text-muted);
+}
+
+.selected .page-check {
+    color: var(--secondary-color);
+}
+
+.page-info-row {
+    display: flex;
+    flex-direction: column;
+}
+
+.page-name {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.page-id {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.modal-footer {
+    padding: 20px 24px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
 @media (max-width: 768px) {
     .section-header {
         flex-direction: column;

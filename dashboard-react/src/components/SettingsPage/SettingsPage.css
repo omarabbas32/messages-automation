@@ -375,6 +375,214 @@
     to { transform: translateY(0); opacity: 1; }
 }
 
+/* New Settings Layout Extensions */
+.settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    margin-bottom: 2rem;
+}
+
+.form-column {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.settings-sub-header {
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.settings-sub-header h4 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--secondary-color);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.info-box.read-only {
+    opacity: 0.7;
+    background: rgba(255,255,255,0.02);
+}
+
+.transparent-input {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    width: 100%;
+    font-size: 1rem;
+    outline: none;
+}
+
+.page-settings-input.select {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 1.25rem;
+}
+
+.page-settings-input.textarea {
+    resize: vertical;
+    line-height: 1.6;
+}
+
+.slider-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    background: var(--bg-primary);
+    padding: 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+}
+
+.slider-wrapper span {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.settings-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    outline: none;
+}
+
+.settings-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    background: var(--secondary-color);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(100, 255, 218, 0.5);
+    transition: transform 0.2s;
+}
+
+.settings-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.max-w-lg {
+    max-width: 500px;
+}
+
+.security-notice {
+    background: rgba(220, 53, 69, 0.05);
+    border: 1px solid rgba(220, 53, 69, 0.2);
+    border-radius: 12px;
+    padding: 1.5rem;
+}
+
+.notice-box {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+.notice-box i {
+    font-size: 1.25rem;
+    margin-top: 0.25rem;
+}
+
+.notice-box.danger i {
+    color: #dc3545;
+}
+
+.notice-box p {
+    margin: 0.25rem 0 0 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.notice-box strong {
+    color: var(--text-primary);
+}
+
+/* Token Usage Card Styles */
+.token-usage-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.token-stat {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.token-icon {
+    width: 48px;
+    height: 48px;
+    background: rgba(100, 255, 218, 0.1);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--secondary-color);
+    font-size: 1.25rem;
+}
+
+.token-info label {
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    margin-bottom: 0.25rem;
+}
+
+.token-info h3 {
+    margin: 0;
+    font-size: 1.5rem;
+    color: var(--text-primary);
+}
+
+.token-info h3 small {
+    font-size: 0.85rem;
+    color: var(--secondary-color);
+    margin-left: 0.5rem;
+    font-weight: 400;
+}
+
+.token-explanation {
+    display: flex;
+    gap: 0.75rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.token-explanation i {
+    color: var(--secondary-color);
+    font-size: 0.9rem;
+    margin-top: 0.2rem;
+}
+
+.token-explanation p {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
 @media (max-width: 992px) {
     .settings-page-container {
         grid-template-columns: 1fr;
