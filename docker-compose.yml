@@ -1,16 +1,13 @@
-version: '3.8'
-
 services:
   app:
     build: .
     container_name: wink-webhook-app
-    # Host ports are commented out because Dokploy/Traefik manages routing internally.
     # ports:
     #   - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DATABASE_URL=postgres://${PGUSER}:${PGPASSWORD}@db:5432/${PGDATABASE}
+      - DATABASE_URL=postgres://${PGUSER}:${PGPASSWORD}@wink-db:5432/${PGDATABASE}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - FB_APP_ID=${FB_APP_ID}
       - FB_APP_SECRET=${FB_APP_SECRET}
@@ -21,13 +18,15 @@ services:
       - VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
       - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - PGHOST=db
+      - PGHOST=wink-db
       - PGPORT=5432
       - PGUSER=${PGUSER}
       - PGPASSWORD=${PGPASSWORD}
       - PGDATABASE=${PGDATABASE}
     depends_on:
       - db
+    networks:
+      - wink-network
     restart: always
 
   db:
@@ -41,7 +40,13 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - wink-network
     restart: always
+
+networks:
+  wink-network:
+    driver: bridge
 
 volumes:
   pgdata:
