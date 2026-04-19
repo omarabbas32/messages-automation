@@ -4,54 +4,6 @@ services:
   app:
     build: .
     container_name: wink-webhook-app
-    # ports:
-    #   - "${PORT:-3000}:3000"
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - DATABASE_URL=postgres://${PGUSER}:${PGPASSWORD}@db:5432/${PGDATABASE}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - FB_APP_ID=${FB_APP_ID}
-      - FB_APP_SECRET=${FB_APP_SECRET}
-      - FB_REDIRECT_URI=${FB_REDIRECT_URI}
-      - VERIFY_TOKEN=${VERIFY_TOKEN}
-      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
-      - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}
-      - VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
-      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      # Database connection for pg_database.js
-      - PGHOST=db
-      - PGPORT=5432
-      - PGUSER=${PGUSER}
-      - PGPASSWORD=${PGPASSWORD}
-      - PGDATABASE=${PGDATABASE}
-    depends_on:
-      - db
-    restart: always
-
-  db:
-    image: ankane/pgvector:latest
-    container_name: wink-webhook-db
-    environment:
-      - POSTGRES_USER=${PGUSER:-postgres}
-      - POSTGRES_PASSWORD=${PGPASSWORD:-postgres}
-      - POSTGRES_DB=${PGDATABASE:-winkwebhook}
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    restart: always
-
-volumes:
-  pgdata:
-
-version: '3.8'
-
-services:
-  app:
-    build: .
-    container_name: wink-webhook-app
     # Host ports are commented out because Dokploy/Traefik manages routing internally.
     # ports:
     #   - "3000:3000"

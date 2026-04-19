@@ -1,3 +1,5 @@
+# Include migrations for fresh DB setup
+# Node dependencies and build artifacts are ignored
 node_modules
 npm-debug.log
 dashboard-react/node_modules
@@ -10,7 +12,3 @@ Dockerfile
 docker-compose.yml
 scratch
 test
-migrations/001_*.sql
-migrations/002_*.sql
-migrations/003_*.sql
-# Keep only 004+ and the runner if needed, but the server initializes the DB or we'll use a script.
