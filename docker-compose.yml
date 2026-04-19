@@ -39,7 +39,7 @@ services:
     # ports:
     #   - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata_fresh:/var/lib/postgresql/data
     networks:
       - wink-network
     restart: always
@@ -49,4 +49,4 @@ networks:
     driver: bridge
 
 volumes:
-  pgdata:
+  pgdata_fresh:
