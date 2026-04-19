@@ -24,12 +24,12 @@ services:
       - PGPASSWORD=${PGPASSWORD}
       - PGDATABASE=${PGDATABASE}
     depends_on:
-      - db
+      - wink-db
     networks:
       - wink-network
     restart: always
 
-  db:
+  wink-db:
     image: ankane/pgvector:latest
     container_name: wink-webhook-db
     environment:
