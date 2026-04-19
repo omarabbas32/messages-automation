@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import './PageCard.css';
 
-function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage }) {
+function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage, onUploadInventory }) {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [pageName, setPageName] = useState(page.page_name || '');
     const [pageToken, setPageToken] = useState(''); // Token is sensitive, don't show existing one
@@ -10,6 +10,32 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage 
     const [aiContextLimit, setAiContextLimit] = useState(page.ai_context_limit || 5);
     const [knowledgeBase, setKnowledgeBase] = useState(page.knowledge_base || '');
     const [isSaving, setIsSaving] = useState(false);
+    const [excelFile, setExcelFile] = useState(null);
+    const [isUploadingExcel, setIsUploadingExcel] = useState(false);
+
+    const handleFileChange = (e) => {
+        setExcelFile(e.target.files[0]);
+    };
+
+    const handleExcelUpload = async () => {
+        if (!excelFile) {
+            window.Swal.fire('Notice', 'Please select an Excel file first.', 'info');
+            return;
+        }
+        setIsUploadingExcel(true);
+        try {
+            const success = await onUploadInventory(page.id, excelFile);
+            if (success) {
+                setExcelFile(null);
+                const fileInput = document.getElementById(`excel-upload-${page.id}`);
+                if (fileInput) fileInput.value = '';
+            }
+        } catch (err) {
+            console.error("Upload error:", err);
+        } finally {
+            setIsUploadingExcel(false);
+        }
+    };
 
     const formatDate = (dateString) => {
         const date = new Date(dateString);
@@ -155,8 +181,32 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage 
                                 rows="6"
                                 className="form-textarea"
                             />
-                            <small className="form-hint">The AI will use this info to answer specific questions.</small>
-                        </div>
+                             <small className="form-hint">The AI will use this info to answer specific questions.</small>
+                         </div>
+
+                         <div className="form-group pt-3 border-t mt-2">
+                            <label className="flex items-center gap-2 font-bold mb-2">
+                                <i className="fa-solid fa-file-excel text-green-600"></i>
+                                Excel Product Inventory
+                            </label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="file" 
+                                    id={`excel-upload-${page.id}`}
+                                    accept=".xlsx, .xls, .csv"
+                                    onChange={handleFileChange}
+                                    className="form-input flex-1"
+                                />
+                                <button 
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={handleExcelUpload}
+                                    disabled={isUploadingExcel || !excelFile}
+                                >
+                                    {isUploadingExcel ? 'Processing...' : 'Upload'}
+                                </button>
+                            </div>
+                            <small className="form-hint">AI will learn your product list from this file.</small>
+                         </div>
                         </div>
 
                         <div className="settings-actions mt-4">

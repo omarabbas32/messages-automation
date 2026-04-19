@@ -1,108 +1,77 @@
 # Project Analysis: WinkWebhook
 
-## Overview
-
-This project consists of a backend (Node.js/Express) and a frontend (React, Vite) for managing webhooks, rules, and dashboards. The structure is divided into two main parts:
-- **Backend**: Handles API endpoints, database operations, and server logic.
-- **Frontend**: Provides a modern dashboard UI for interacting with the backend.
+## 🚀 Overview
+WinkWebhook is a sophisticated, multi-tenant SaaS application designed for automating interactions on Facebook Pages using AI (LLMs) and custom keyword rules. It features a robust backend for handling webhooks and a modern React-based dashboard for users to manage their automation, knowledge base (RAG), and account settings.
 
 ---
 
-## Backend Structure
+## 🛠️ Technology Stack
 
-### Main Files
-- **server.js**: Entry point for the backend server. Sets up Express, routes, and middleware.
-- **database.js**: Handles database connections and queries (likely using SQLite or similar, based on naming).
-- **package.json**: Lists backend dependencies (e.g., Express, CORS, body-parser).
-
-### Responsibilities
-- **API Endpoints**: Serve data to the frontend, handle CRUD operations for rules/pages/webhooks.
-- **Database Layer**: Abstracts data storage and retrieval.
-- **Middleware**: Handles CORS, JSON parsing, and possibly authentication.
-
-### Notable Patterns
-- **Separation of Concerns**: Database logic is separated from server logic.
-- **RESTful API**: Likely exposes endpoints for rules, pages, and dashboard data.
+| Layer | Technology | Purpose |
+| :--- | :--- | :--- |
+| **Backend** | Node.js, Express | Core API and Webhook handling |
+| **Frontend** | React, Vite, Vanilla CSS | Interactive user dashboard |
+| **Database** | PostgreSQL | Relational data and multi-tenancy |
+| **Vector DB** | pgvector | Vector storage for RAG (Knowledge Base) |
+| **AI/ML** | OpenAI API | Chat completions and Embeddings |
+| **Auth** | JWT / Cookies | Secure session management |
+| **Deployment** | ngrok (local) | Webhook tunnel and HTTPS |
 
 ---
 
-## Frontend Structure
+## 🏗️ Backend Architecture
 
-Located in the `dashboard-react/` folder, built with React and Vite for fast development and hot reloading.
+### Core Components
+- **server.js**: The central hub. Handles webhook reception, authentication middleware, and all API endpoints for the dashboard.
+- **database.js**: The data access layer. Implements business logic and queries for users, pages, rules, and conversations.
+- **pg_database.js**: The low-level database connection pool and vector extension initialization.
+- **embedding_service.js**: Communicates with OpenAI to generate unified embeddings for both queries and knowledge chunks.
 
-### Main Files & Folders
-- **src/**: Main source code for the React app.
-  - **App.jsx**: Root component, sets up routing and layout.
-  - **main.jsx**: Entry point, renders the app.
-  - **assets/**: Static assets (images, icons, etc.).
-  - **components/**: Reusable UI components.
-    - **Modal/**: Modal dialog component.
-    - **Navbar/**: Top navigation bar.
-    - **PageCard/**: Card component for displaying pages.
-    - **RulesTable/**: Table for displaying rules.
-    - **Toast/**: Notification/toast messages.
-  - **sections/**: Page-level sections.
-    - **PagesSection.jsx**: Section for managing/viewing pages.
-    - **RulesSection.jsx**: Section for managing/viewing rules.
-- **public/**: Static files served directly (e.g., favicon, manifest).
-- **index.html**: Main HTML template.
-- **vite.config.js**: Vite configuration.
-- **eslint.config.js**: Linting rules.
-- **package.json**: Frontend dependencies (React, Vite, etc.).
-
-### Responsibilities
-- **UI/UX**: Provides a dashboard for users to manage webhooks, rules, and pages.
-- **API Integration**: Fetches data from the backend and displays it.
-- **State Management**: Likely uses React state/hooks for managing UI state.
-
-### Notable Patterns
-- **Component-Based Architecture**: UI is broken into reusable components.
-- **Sectioned Layout**: Logical separation between different dashboard areas (rules, pages).
-- **CSS Modules**: Scoped CSS for each component/section.
+### RAG (Retrieval-Augmented Generation)
+The project implements a state-of-the-art AI response system:
+1. **Knowledge Upload**: Text is chunked and stored in `page_documents` with vectors.
+2. **Context Retrieval**: On message receipt, the system performs a vector similarity search via `pgvector` to find relevant context.
+3. **Injected Prompting**: Context is injected into the system prompt to ground the AI's response in page-specific knowledge.
 
 ---
 
-## Backend-Frontend Interaction
+## 🎨 Frontend Architecture
+The frontend follows a modular, section-based design.
 
-- **API Calls**: The frontend communicates with the backend via HTTP requests (likely using fetch or axios).
-- **Data Flow**: User actions in the dashboard trigger API calls, which update the backend and reflect changes in the UI.
-
----
-
-## Unique/Complex Logic
-- **Rules Engine**: The presence of `RulesTable` and `RulesSection` suggests a rules management system, possibly with custom logic for evaluating or triggering webhooks.
-- **Modal/Toast Components**: Custom UI for user feedback and interaction.
-
----
-
-## High-Level Architecture Diagram
-
-```mermaid
-graph TD
-  A[User] -->|Interacts| B[React Dashboard]
-  B -->|API Calls| C[Express Server]
-  C -->|DB Queries| D[Database]
-```
+### Key Sections & Components
+- **Navbar**: Professional brand identity and user profile management.
+- **PagesSection**: Management of connected Facebook Pages (Page ID, Tokens, AI status).
+- **RulesSection**: Keyword-based automation that takes priority over AI responses.
+- **SettingsPage**: Central hub for API keys, usage tracking, and account management.
+- **Auth**: Dedicated login and registration flows with JWT handling.
 
 ---
 
-## Summary Table
-
-| Layer     | Technology         | Key Files/Folders         | Responsibilities                |
-|-----------|--------------------|---------------------------|----------------------------------|
-| Backend   | Node.js, Express   | server.js, database.js    | API, DB, business logic          |
-| Frontend  | React, Vite        | dashboard-react/src/      | UI, API integration, state mgmt  |
-| Database  | (Unspecified)      | database.js               | Data storage/retrieval           |
+## 🔑 Multi-Tenancy & Security
+- **Owner Isolation**: All records (pages, rules, documents) are scoped via `owner_id`.
+- **JWT Authentication**: Secure stateless auth with access and refresh tokens stored in HTTP-only cookies.
+- **Personal API Keys**: Users can provide their own OpenAI keys to bypass system-level quotas and gain more control.
 
 ---
 
-## Recommendations
-- **Add Documentation**: Inline code comments and API docs would help future maintainers.
-- **Testing**: Consider adding unit/integration tests for both backend and frontend.
-- **Environment Variables**: Use `.env` files for configuration (if not already present).
+## 📉 Current Project State
+
+### ✅ Implemented
+- [x] Full PostgreSQL migration with `pgvector` support.
+- [x] Webhook handling for Facebook Page messages.
+- [x] AI Responses with RAG (Knowledge Base).
+- [x] Multi-tenant dashboard with Auth.
+- [x] Keyword automation rules.
+
+### 🚧 Roadmap (Planned Additions)
+- [ ] **Global AI Config**: Centralized control for AI model selection and parameters.
+- [ ] **Security Expansion**: Active "Change Password" and profile management.
+- [ ] **Advanced Usage Analytics**: Better visualization of message quotas.
+- [ ] **Billing Integration**: Full Stripe fulfillment logic.
 
 ---
 
-## Conclusion
-
-This project is a well-structured full-stack application with clear separation between backend and frontend. It leverages modern tools (React, Vite, Express) and follows best practices for modularity and maintainability. The dashboard UI and rules management features are central to its functionality.
+## 💡 Recommendations
+1. **Error Resiliency**: Implement more granular error handling for the Webhook handler to avoid 500s on minor API timeouts.
+2. **Caching**: Utilize `embedding_cache.js` more aggressively to reduce OpenAI cost and latency.
+3. **Admin Dashboard**: Create a "Super Admin" view to monitor system-wide usage and health.

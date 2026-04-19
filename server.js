@@ -1,4 +1,6 @@
 import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 import axios from "axios";
 import OpenAI from "openai";
 import dotenv from "dotenv";
@@ -9,6 +11,14 @@ import * as db from "./database.js";
 import { requireAuth } from './middleware/requireAuth.js';
 import { initPgVector, query as pgQuery } from './pg_database.js';
 import { getEmbedding } from './embedding_service.js';
+import multer from 'multer';
+import { processExcelInventory } from './excel_processor.js';
+
+// Setup Multer for memory storage
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
@@ -28,7 +38,13 @@ process.on('unhandledRejection', (reason, promise) => {
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static("public")); // Serve dashboard files
+
+// Support for __dirname in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve static files from the React app's build directory
+app.use(express.static(path.join(__dirname, 'dashboard-react/dist')));
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "mytoken123";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -169,9 +185,9 @@ async function handleMessage(pageId, senderId, message) {
           const ragResult = await pgQuery(
             `SELECT content, 1 - (embedding <#> $1::vector) AS score
              FROM page_documents
-             WHERE page_id = $2 AND doc_type = 'knowledge_chunk' AND embedding IS NOT NULL
+             WHERE page_id = $2 AND (doc_type = 'knowledge_chunk' OR doc_type = 'excel_inventory') AND embedding IS NOT NULL
              ORDER BY embedding <#> $1::vector
-             LIMIT 3`,
+             LIMIT 5`,
             [vecLiteral, pageId]
           );
 
@@ -193,7 +209,9 @@ async function handleMessage(pageId, senderId, message) {
       console.log(`💬 Context: sending last ${history.length} messages to AI`);
 
       // 4c. Build the prompt
+      const globalInstructions = ownerSettings?.ai_global_instructions ? `${ownerSettings.ai_global_instructions}\n\n` : '';
       const systemPrompt =
+        globalInstructions +
         `أنت مساعد خدمة عملاء لصفحة "${page.page_name}" على فيسبوك.` +
         `${knowledgeContext}\n\n` +
         `التعليمات: ${page.ai_instructions || 'أجب بشكل محترف ومفيد.'}\n` +
@@ -205,14 +223,17 @@ async function handleMessage(pageId, senderId, message) {
         { role: "user", content: message }
       ];
 
+      // Use user-defined defaults or system fallback
       const gptReply = await activeOpenai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: ownerSettings?.ai_default_model || "gpt-4o-mini",
         messages,
-        temperature: 0.7,
-        max_tokens: 250
+        temperature: ownerSettings?.ai_default_temperature !== undefined ? parseFloat(ownerSettings.ai_default_temperature) : 0.7,
+        max_tokens: ownerSettings?.ai_default_max_tokens ? parseInt(ownerSettings.ai_default_max_tokens) : 250
       });
 
       const aiResponse = gptReply.choices[0].message.content;
+      const tokensUsed = gptReply.usage?.total_tokens || 0;
+      console.log(`📊 AI Usage: ${tokensUsed} tokens`);
 
       // 4d. Save both messages in conversation history
       await db.saveConversation(pageId, senderId, "user", message);
@@ -222,7 +243,7 @@ async function handleMessage(pageId, senderId, message) {
       console.log("✅ AI response sent");
 
       // 4e. Increment user usage count
-      await db.incrementUserUsage(page.owner_id);
+      await db.incrementUserUsage(page.owner_id, tokensUsed);
 
     } catch (error) {
       console.error("❌ OpenAI error:", error.message);
@@ -395,6 +416,92 @@ app.post('/api/auth/logout', async (req, res) => {
     res.json({ success: true });
 });
 
+// ==================== FACEBOOK OAUTH FLOW ====================
+
+app.get('/api/auth/facebook/url', requireAuth, (req, res) => {
+    const appId = process.env.FB_APP_ID;
+    const redirectUri = process.env.FB_REDIRECT_URI; // Must match exactly what's in Facebook App settings
+    const state = req.userId;
+    
+    const scopes = [
+        'pages_messaging',
+        'pages_manage_metadata',
+        'pages_read_engagement',
+        'public_profile',
+        'email'
+    ];
+
+    const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&scope=${scopes.join(',')}`;
+    
+    res.json({ success: true, url: authUrl });
+});
+
+app.get('/api/auth/facebook/callback', async (req, res) => {
+    const { code, state: userId } = req.query;
+    
+    if (!code) return res.status(400).send("Authorization failed: No code provided.");
+
+    try {
+        // 1. Exchange code for user access token
+        // redirect_uri must EXACTLY match the one used in the auth URL
+        const tokenRes = await axios.get(`https://graph.facebook.com/v18.0/oauth/access_token`, {
+            params: {
+                client_id: process.env.FB_APP_ID,
+                client_secret: process.env.FB_APP_SECRET,
+                redirect_uri: process.env.FB_REDIRECT_URI,
+                code
+            }
+        });
+
+        const userAccessToken = tokenRes.data.access_token;
+
+        // 2. Exchange for long-lived user token (60 days)
+        const longLivedRes = await axios.get(`https://graph.facebook.com/v18.0/oauth/access_token`, {
+            params: {
+                grant_type: 'fb_exchange_token',
+                client_id: process.env.FB_APP_ID,
+                client_secret: process.env.FB_APP_SECRET,
+                fb_exchange_token: userAccessToken
+            }
+        });
+
+        const longLivedUserToken = longLivedRes.data.access_token;
+
+        // 3. Get list of pages and their tokens
+        const pagesRes = await axios.get(`https://graph.facebook.com/v18.0/me/accounts`, {
+            params: { access_token: longLivedUserToken }
+        });
+
+        const pages = pagesRes.data.data.map(page => ({
+            id: page.id,
+            name: page.name,
+            access_token: page.access_token // These are already long-lived because the user token was long-lived
+        }));
+
+        // Send HTML that posts message to opener and closes itself
+        // Using '*' as target origin so it works when frontend (localhost:5173) and backend (ngrok) are on different domains
+        res.send(`
+            <html>
+            <body>
+                <script>
+                    const pages = ${JSON.stringify(pages)};
+                    if (window.opener) {
+                        window.opener.postMessage({ type: 'FB_AUTH_SUCCESS', pages }, '*');
+                        window.close();
+                    } else {
+                        document.body.innerHTML = '<h2>✅ Connected! You can close this window.</h2>';
+                    }
+                </script>
+                <h2>Connection successful! Closing window...</h2>
+            </body>
+            </html>
+        `);
+    } catch (error) {
+        console.error('❌ FB OAuth Error:', error.response?.data || error.message);
+        res.status(500).send("FB Authentication Failed. Check server logs.");
+    }
+});
+
 // ==================== API ENDPOINTS FOR DASHBOARD ====================
 
 // Apply authentication to all /api routes below this line
@@ -409,6 +516,52 @@ app.get("/api/pages", async (req, res) => {
         const pages = await db.getAllPages(req.userId);
         res.json({ success: true, data: pages });
     } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Bulk connect pages from OAuth
+ * POST /api/pages/bulk
+ */
+app.post("/api/pages/bulk", requireAuth, async (req, res) => {
+    try {
+        const { pages } = req.body; // Array of { id, name, access_token }
+        if (!pages || !Array.isArray(pages)) return res.status(400).json({ success: false, error: "Invalid pages data" });
+
+        const results = [];
+        console.log(`📥 Starting bulk import for user ${req.userId} with ${pages.length} pages.`);
+        
+        for (const p of pages) {
+            try {
+                // 1. Add/Update page in DB
+                const result = await db.addPage(req.userId, p.id, p.access_token, p.name);
+                
+                if (result.success) {
+                    console.log(`✅ Page ${p.name} (${p.id}) saved/updated.`);
+                } else {
+                    console.warn(`⚠️ Page ${p.name} save result:`, result.error);
+                }
+
+                // 2. Subscribe webhook to page messages
+                await axios.post(`https://graph.facebook.com/v18.0/${p.id}/subscribed_apps`, null, {
+                    params: {
+                        access_token: p.access_token,
+                        subscribed_fields: 'messages,messaging_postbacks'
+                    }
+                });
+                console.log(`📡 Subscribed webhook to page: ${p.name}`);
+                
+                results.push({ id: p.id, name: p.name, success: true });
+            } catch (pErr) {
+                console.error(`❌ Failed processing page ${p.name}:`, pErr.response?.data || pErr.message);
+                results.push({ id: p.id, name: p.name, success: false, error: pErr.message });
+            }
+        }
+
+        res.json({ success: true, results });
+    } catch (error) {
+        console.error('❌ Bulk import critical error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -444,6 +597,41 @@ app.post('/api/search/vector', async (req, res) => {
     } catch (error) {
         console.error('Vector search error:', error);
         return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Handle Inventory Excel Upload
+ * POST /api/pages/:pageId/inventory/upload
+ */
+app.post("/api/pages/:pageId/inventory/upload", requireAuth, upload.single('file'), async (req, res) => {
+    try {
+        const { pageId } = req.params;
+        const ownerId = req.userId;
+
+        // 1. Verify page ownership
+        const page = await db.getPageById(pageId);
+        if (!page || page.owner_id !== ownerId) {
+            return res.status(403).json({ success: false, error: "Unauthorized or page not found" });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: "No file uploaded" });
+        }
+
+        // 2. Process the Excel file
+        console.log(`🚀 Starting inventory import for Page ${pageId} (${page.page_name})`);
+        // Use page.page_id (Facebook ID) for storing documents
+        const result = await processExcelInventory(page.page_id, req.file.buffer);
+
+        res.json({ 
+            success: true, 
+            message: `Successfully synced ${result.count} items to your inventory.`,
+            count: result.count 
+        });
+    } catch (error) {
+        console.error('❌ Inventory upload error:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -615,22 +803,81 @@ app.get("/api/user/settings", async (req, res) => {
 
 app.patch("/api/user/settings", async (req, res) => {
     try {
-        const { openai_api_key } = req.body;
+        const { 
+            openai_api_key, display_name, ai_default_model, 
+            ai_default_temperature, ai_default_max_tokens, ai_global_instructions 
+        } = req.body;
+
+        // Prevent overwriting with masked key
+        const updateData = { ...req.body };
         if (openai_api_key && openai_api_key.includes('...')) {
+            delete updateData.openai_api_key;
+        }
+
+        if (Object.keys(updateData).length === 0) {
             return res.json({ success: true, message: 'No changes made' });
         }
-        const success = await db.updateUserSettings(req.userId, { openai_api_key });
+
+        const success = await db.updateUserSettings(req.userId, updateData);
         if (success) res.json({ success: true });
-        else res.status(400).json({ success: false, error: 'Failed' });
+        else res.status(400).json({ success: false, error: 'Failed to update settings' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ==================== START SERVER ====================
+app.patch("/api/user/password", async (req, res) => {
+    try {
+        const { current_password, new_password } = req.body;
+        if (!current_password || !new_password) {
+            return res.status(400).json({ success: false, error: 'Missing password fields' });
+        }
 
-app.listen(PORT, () => {
-    console.log(`\n🎉 Server running on http://localhost:${PORT}`);
+        // Verify current password
+        const userSettings = await db.getUserSettings(req.userId);
+        const user = await db.getUserByEmail(userSettings.email);
+        
+        const isValid = await bcrypt.compare(current_password, user.password_hash);
+        if (!isValid) {
+            return res.status(401).json({ success: false, error: 'Current password incorrect' });
+        }
+
+        const success = await db.updateUserPassword(req.userId, new_password);
+        if (success) res.json({ success: true });
+        else res.status(400).json({ success: false, error: 'Failed to update password' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Handle legacy dashboard.html path by redirecting to root
+app.get('/dashboard.html', (req, res) => {
+    res.redirect('/');
+});
+
+// Catch-all: serve the React app for any other requests (Express 5.x safe)
+app.use((req, res) => {
+    // If it's an API route that wasn't matched, don't serve the dashboard HTML
+    if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: "API route not found" });
+    }
+    res.sendFile(path.join(__dirname, 'dashboard-react/dist', 'index.html'));
+});
+
+/**
+ * Start Server
+ */
+app.listen(PORT, async () => {
+  console.log(`\n🎉 SaaS Gateway running on port ${PORT}`);
+  console.log(`🔗 Webhook: ${process.env.FB_REDIRECT_URI.replace('/api/auth/facebook/callback', '')}/webhook`);
+  
+  try {
+    await db.initDatabase();
+    await initPgVector();
+  } catch (err) {
+    console.error('❌ Database initialization failed:', err.message);
+    console.warn('⚠️ Server is running but database-dependent features will fail.');
+  }
 });
 
 export default app;
