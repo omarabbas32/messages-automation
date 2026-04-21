@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Laylo, Settings, LogOut, Menu, X, Facebook, Instagram, MessageSquare, Zap } from 'lucide-react';
+import { Home, Settings, LogOut, Menu, X, MessageSquare, Zap } from 'lucide-react';
 
 const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
   <button

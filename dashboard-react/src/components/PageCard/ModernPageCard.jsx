@@ -1,5 +1,5 @@
 import React from 'react';
-import { Facebook, Instagram, Settings, Trash2, Zap, ZapOff, ExternalLink, RefreshCw } from 'lucide-react';
+import { Globe, Share2, Settings, Trash2, Zap, ZapOff, ExternalLink, RefreshCw } from 'lucide-react';
 
 const ModernPageCard = ({ page, onUpdateAI, onDeletePage, onEdit }) => {
   const isInstagram = page.platform === 'instagram';
@@ -10,9 +10,9 @@ const ModernPageCard = ({ page, onUpdateAI, onDeletePage, onEdit }) => {
       <div className="bg-wink-gray-50 px-5 py-3 border-b border-wink-gray-100 flex items-center justify-between">
         <div className="flex items-center space-x-2">
           {isInstagram ? (
-            <Instagram size={16} className="text-wink-black" />
+            <Share2 size={16} className="text-wink-black" />
           ) : (
-            <Facebook size={16} className="text-wink-black" />
+            <Globe size={16} className="text-wink-black" />
           )}
           <span className="text-[10px] font-bold uppercase tracking-widest text-wink-gray-400">
             {page.platform}

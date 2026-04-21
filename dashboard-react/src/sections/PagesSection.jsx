@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import ModernPageCard from '../components/PageCard/ModernPageCard';
-import { Facebook, Instagram, Keyboard, LayoutGrid, Plus, X, CheckSquare, Square, Search, Loader2 } from 'lucide-react';
+import { Globe, Share2, Keyboard, LayoutGrid, Plus, X, CheckSquare, Square, Search, Loader2 } from 'lucide-react';
 
 function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIGAuthUrl, onDeletePage, onUpdateAI, onUpdateKnowledge, onUpdatePage, onUploadInventory }) {
     const [isFormOpen, setIsFormOpen] = useState(false);
@@ -166,7 +166,7 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
                                             <p className="text-xs text-wink-gray-400 font-mono tracking-tighter uppercase">{page.platform || 'facebook'} • {page.id}</p>
                                         </div>
                                     </div>
-                                    {page.platform === 'instagram' ? <Instagram size={18} /> : <Facebook size={18} />}
+                                    {page.platform === 'instagram' ? <Share2 size={18} /> : <Globe size={18} />}
                                 </div>
                              ))}
                         </div>
