@@ -276,13 +276,17 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
             url = `https://graph.facebook.com/v19.0/${accountId}/messages?access_token=${pageToken}`;
         }
 
-        await axios.post(
-            url,
-            {
-                recipient: { id: senderId },
-                message: { text },
-            }
-        );
+        const payload = {
+            recipient: { id: senderId },
+            message: { text },
+        };
+
+        // Instagram often requires messaging_type: 'RESPONSE' to function correctly
+        if (platform === 'instagram') {
+            payload.messaging_type = 'RESPONSE';
+        }
+
+        await axios.post(url, payload);
         console.log(`✉️ [${platform}] Reply sent to ${senderId}`);
     } catch (error) {
         console.error(`❌ Error sending ${platform} message:`, error.response?.data || error.message);
