@@ -474,7 +474,10 @@ export async function revokeAllRefreshTokens(userId) {
 
 export async function initDatabase() {
   try {
-    console.log('✅ PostgreSQL database ready (no index creation needed — handled by migrations)');
+    // Auto-apply migration 010: add platform support columns if they don't exist yet
+    await query(`ALTER TABLE pages ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'facebook' CHECK (platform IN ('facebook', 'instagram'))`);
+    await query(`ALTER TABLE pages ADD COLUMN IF NOT EXISTS ig_user_id TEXT`);
+    console.log('✅ PostgreSQL database ready');
     // Clean up old conversations daily
     setInterval(cleanupConversations, 24 * 60 * 60 * 1000);
   } catch (error) {
