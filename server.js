@@ -110,6 +110,12 @@ app.post("/webhook", async (req, res) => {
             for (const event of entry.messaging || []) {
                 const senderId = event.sender.id;
                 const message = event.message?.text;
+                const isEcho = event.message?.is_echo;
+
+                if (isEcho) {
+                    console.log(`↩️ [${isInstagram ? 'IG' : 'FB'}] Ignoring echo message from ${senderId}`);
+                    continue;
+                }
 
                 if (message) {
                     console.log(`📨 [${isInstagram ? 'IG' : 'FB'}] Message from ${senderId} to ${accountId}: "${message}"`);
