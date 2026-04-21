@@ -447,10 +447,14 @@ app.get('/api/auth/facebook/url', requireAuth, (req, res) => {
 });
 
 app.get('/api/auth/instagram/url', requireAuth, (req, res) => {
-    const appId = process.env.FB_APP_ID;
-    const redirectUri = process.env.IG_REDIRECT_URI || process.env.FB_REDIRECT_URI; 
+    const appId = process.env.IG_APP_ID;
+    const redirectUri = process.env.IG_REDIRECT_URI;
     const state = req.userId;
     
+    if (!appId || !redirectUri) {
+        return res.status(500).json({ success: false, error: 'Instagram app not configured. Set IG_APP_ID and IG_REDIRECT_URI in .env' });
+    }
+
     const scopes = [
         'instagram_basic',
         'instagram_manage_messages',
@@ -470,13 +474,15 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
     if (!code) return res.status(400).send("Authorization failed: No code provided.");
 
     try {
-        const redirectUri = process.env.IG_REDIRECT_URI || process.env.FB_REDIRECT_URI;
+        const igAppId     = process.env.IG_APP_ID;
+        const igAppSecret = process.env.IG_APP_SECRET;
+        const redirectUri = process.env.IG_REDIRECT_URI;
 
-        // 1. Exchange code for user access token
+        // 1. Exchange code for short-lived user access token
         const tokenRes = await axios.get(`https://graph.facebook.com/v19.0/oauth/access_token`, {
             params: {
-                client_id: process.env.FB_APP_ID,
-                client_secret: process.env.FB_APP_SECRET,
+                client_id: igAppId,
+                client_secret: igAppSecret,
                 redirect_uri: redirectUri,
                 code
             }
@@ -484,19 +490,19 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
 
         const userAccessToken = tokenRes.data.access_token;
 
-        // 2. Exchange for long-lived user token
+        // 2. Exchange for long-lived user token (60 days)
         const longLivedRes = await axios.get(`https://graph.facebook.com/v19.0/oauth/access_token`, {
             params: {
                 grant_type: 'fb_exchange_token',
-                client_id: process.env.FB_APP_ID,
-                client_secret: process.env.FB_APP_SECRET,
+                client_id: igAppId,
+                client_secret: igAppSecret,
                 fb_exchange_token: userAccessToken
             }
         });
 
         const longLivedUserToken = longLivedRes.data.access_token;
 
-        // 3. Get Pages that have linked Instagram accounts
+        // 3. Get the Facebook Pages linked to this user, expanding to their IG Business Accounts
         const pagesRes = await axios.get(`https://graph.facebook.com/v19.0/me/accounts`, {
             params: { 
                 access_token: longLivedUserToken,
@@ -508,13 +514,23 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
         for (const page of pagesRes.data.data) {
             if (page.instagram_business_account) {
                 igAccounts.push({
-                    id: page.instagram_business_account.id, // The IG User ID
-                    name: page.instagram_business_account.name || page.instagram_business_account.username,
-                    access_token: page.access_token, // IG uses the Page Access Token for messaging
+                    id: page.instagram_business_account.id,   // IG User ID — this is what webhook events use
+                    name: page.instagram_business_account.name || `@${page.instagram_business_account.username}`,
+                    access_token: page.access_token,          // The Facebook Page token (used for IG messaging API)
                     platform: 'instagram',
                     ig_user_id: page.instagram_business_account.id
                 });
             }
+        }
+
+        if (igAccounts.length === 0) {
+            return res.send(`
+                <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0f0f0f;color:#fff">
+                    <h2>⚠️ No Instagram Business Accounts Found</h2>
+                    <p>Make sure your Instagram account is a <strong>Business or Creator</strong> account and is linked to a Facebook Page.</p>
+                    <script>setTimeout(() => window.close(), 5000);</script>
+                </body></html>
+            `);
         }
 
         res.send(`
@@ -530,7 +546,7 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
                     }
                 </script>
                 <div style="text-align: center;">
-                    <h2>Connection successful!</h2>
+                    <h2>✅ Connection successful!</h2>
                     <p>Closing window...</p>
                 </div>
             </body>
@@ -538,7 +554,14 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
         `);
     } catch (error) {
         console.error('❌ IG OAuth Error:', error.response?.data || error.message);
-        res.status(500).send("Instagram Authentication Failed. Check server logs.");
+        const errMsg = error.response?.data?.error?.message || error.message;
+        res.status(500).send(`
+            <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0f0f0f;color:#fff">
+                <h2>❌ Instagram Authentication Failed</h2>
+                <p style="color:#ff6b6b">${errMsg}</p>
+                <script>setTimeout(() => window.close(), 6000);</script>
+            </body></html>
+        `);
     }
 });
 
