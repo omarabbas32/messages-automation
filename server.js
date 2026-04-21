@@ -475,8 +475,8 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
     if (!code) return res.status(400).send("Authorization failed: No code provided.");
 
     try {
-        const igAppId     = process.env.IG_APP_ID;
-        const igAppSecret = process.env.IG_APP_SECRET;
+        const igAppId     = process.env.IG_APP_ID || process.env.FB_APP_ID;
+        const igAppSecret = process.env.IG_APP_SECRET || process.env.FB_APP_SECRET;
         const redirectUri = process.env.IG_REDIRECT_URI;
 
         // 1. Exchange code for short-lived user access token
