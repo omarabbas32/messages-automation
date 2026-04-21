@@ -517,25 +517,27 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
             }
         });
 
-        console.log('🔍 [DEBUG IG DISCOVERY] Raw Meta response for /me/accounts:', JSON.stringify(pagesRes.data, null, 2));
+        // DEEP DEBUG: Log everything Meta returns during discovery
+        console.log('🔍 [DEBUG IG DISCOVERY] Full Meta Identity Response:', JSON.stringify(pagesRes.data, null, 2));
 
         const igAccounts = [];
         for (const page of pagesRes.data.data) {
             if (page.instagram_business_account) {
                 const igAccount = page.instagram_business_account;
                 
-                // Meta ID Mismatch Logic:
-                // We store 'id' as the primary page_id, but we also save 'ig_id' as ig_user_id.
-                // Our database query now checks both.
+                // Deep ID Logic:
+                // We save 'igAccount.id' as the primary ID.
+                // We use 'igAccount.ig_id' OR the 'page.id' (Facebook Page ID) as the ig_user_id fallback.
+                // This maximizes the chances of matching the webhook's entry.id.
                 igAccounts.push({
                     id: igAccount.id, 
                     name: igAccount.name || `@${igAccount.username}`,
                     access_token: page.access_token,
                     platform: 'instagram',
-                    ig_user_id: igAccount.ig_id || igAccount.id // Store the secondary ID if available
+                    ig_user_id: igAccount.ig_id || page.id 
                 });
 
-                console.log(`📌 Discovered IG: ${igAccount.name} | node_id: ${igAccount.id} | ig_id: ${igAccount.ig_id} | linked_page: ${page.id}`);
+                console.log(`📌 Found IG: ${igAccount.name} | NodeID: ${igAccount.id} | LegacyID: ${igAccount.ig_id} | LinkedPageID: ${page.id}`);
             }
         }
 
