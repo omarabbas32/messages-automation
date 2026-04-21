@@ -7,7 +7,6 @@ import SettingsPage from './components/SettingsPage/SettingsPage';
 import LoginPage from './sections/Auth/LoginPage';
 import RegisterPage from './sections/Auth/RegisterPage';
 import { useAuth } from './contexts/AuthContext';
-import './App.css';
 
 function App() {
   const { user, isLoading, refreshSession } = useAuth();

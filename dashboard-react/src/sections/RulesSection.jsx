@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import RulesTable from '../components/RulesTable/RulesTable';
-import './RulesSection.css';
+import { Settings2, Plus, MessageSquare, Target, ChevronDown } from 'lucide-react';
 
 function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, onDeleteRule }) {
     const [formData, setFormData] = useState({
@@ -21,75 +21,96 @@ function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, o
     };
 
     return (
-        <section className="section">
-            <div className="section-header">
-                <h2 className="section-title">
-                    <span className="section-icon"><i className="fa-solid fa-gears"></i></span>
-                    Automation Rules
-                </h2>
+        <section className="animate-slide-in-top delay-200 pb-20">
+            {/* Header */}
+            <div className="mb-10">
+                <div className="flex items-center space-x-3 mb-2">
+                    <Settings2 size={24} className="text-wink-black" />
+                    <h2 className="text-2xl font-black tracking-tight text-wink-black uppercase">Automation Rules</h2>
+                </div>
+                <p className="text-wink-gray-400 font-medium">Fine-tune how your AI interacts with specific triggers.</p>
             </div>
 
-            <div className="page-selector-card">
-                <label htmlFor="pageSelector">Select Page:</label>
-                <select
-                    id="pageSelector"
-                    className="form-select"
-                    value={selectedPageId || ''}
-                    onChange={(e) => onSelectPage(e.target.value)}
-                >
-                    <option value="">-- Choose a page --</option>
-                    {pages.map(page => (
-                        <option key={page.page_id} value={page.page_id}>
-                            {page.page_name} ({page.page_id})
-                        </option>
-                    ))}
-                </select>
+            {/* Page Selector Strip */}
+            <div className="bg-wink-white border border-wink-gray-200 rounded-2xl p-2 mb-10 flex flex-wrap gap-2">
+                 <div className="flex items-center px-4 py-2 text-xs font-black uppercase tracking-widest text-wink-gray-400">
+                    Scope:
+                 </div>
+                 {pages.length === 0 ? (
+                    <div className="px-4 py-2 text-sm text-wink-gray-300 italic">No identities connected.</div>
+                 ) : (
+                    pages.map(page => (
+                        <button
+                            key={page.page_id}
+                            onClick={() => onSelectPage(page.page_id)}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-tighter transition-all ${
+                                selectedPageId === page.page_id 
+                                ? 'bg-wink-black text-wink-white shadow-lg' 
+                                : 'bg-wink-gray-50 text-wink-gray-500 hover:bg-wink-gray-100 hover:text-wink-black'
+                            }`}
+                        >
+                            {page.page_name}
+                        </button>
+                    ))
+                 )}
             </div>
 
-            {selectedPageId && (
-                <div className="rules-section-content animate-fade-in">
-                    <div className="form-card">
-                        <h3 className="form-title">Add New Rule</h3>
-                        <form onSubmit={handleSubmit}>
-                            <div className="form-row">
-                                <div className="form-group">
-                                    <label htmlFor="keyword">Keyword</label>
-                                    <input
-                                        type="text"
-                                        id="keyword"
-                                        name="keyword"
-                                        value={formData.keyword}
-                                        onChange={handleChange}
-                                        required
-                                        placeholder="Ex: price, product, service"
-                                        className="form-input"
-                                    />
+            {selectedPageId ? (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
+                    {/* Add Rule Form */}
+                    <div className="lg:col-span-1 bg-wink-white border border-wink-black rounded-2xl p-8 shadow-xl">
+                        <div className="flex items-center space-x-3 mb-8 text-wink-black">
+                            <Plus size={20} />
+                            <h3 className="font-black uppercase tracking-tighter">Define New Rule</h3>
+                        </div>
+                        <form onSubmit={handleSubmit} className="space-y-6">
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">
+                                    <Target size={12} />
+                                    <span>Trigger Keyword</span>
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="reply">Auto Reply</label>
-                                    <textarea
-                                        id="reply"
-                                        name="reply"
-                                        value={formData.reply}
-                                        onChange={handleChange}
-                                        required
-                                        placeholder="Ex: The price is $50. Contact us for details..."
-                                        className="form-textarea"
-                                        rows="3"
-                                    />
-                                </div>
+                                <input
+                                    type="text"
+                                    name="keyword"
+                                    value={formData.keyword}
+                                    onChange={handleChange}
+                                    required
+                                    placeholder="e.g. price, menu, address"
+                                    className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all placeholder:font-normal"
+                                />
                             </div>
 
-                            <div className="form-actions">
-                                <button type="submit" className="btn btn-primary">
-                                    Add Rule
-                                </button>
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">
+                                    <MessageSquare size={12} />
+                                    <span>Automated Reply</span>
+                                </div>
+                                <textarea
+                                    name="reply"
+                                    value={formData.reply}
+                                    onChange={handleChange}
+                                    required
+                                    placeholder="Type the response here..."
+                                    className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all min-h-[120px] placeholder:font-normal"
+                                />
                             </div>
+
+                            <button type="submit" className="w-full bg-wink-black text-wink-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-wink-gray-800 shadow-lg transition-all flex items-center justify-center space-x-2">
+                                <Plus size={18} />
+                                <span>Add Rule</span>
+                            </button>
                         </form>
                     </div>
 
-                    <RulesTable rules={rules} onDeleteRule={onDeleteRule} />
+                    {/* Rules Table Area */}
+                    <div className="lg:col-span-2">
+                        <RulesTable rules={rules} onDeleteRule={onDeleteRule} />
+                    </div>
+                </div>
+            ) : (
+                <div className="py-20 flex flex-col items-center justify-center border-2 border-dashed border-wink-gray-200 rounded-3xl opacity-50 bg-wink-gray-50/50">
+                    <Target size={48} className="text-wink-gray-300 mb-4" />
+                    <p className="font-bold text-wink-gray-400">Select an identity above to manage its rules.</p>
                 </div>
             )}
         </section>

@@ -1,32 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import './SettingsPage.css';
+import { User, Settings as SettingsIcon, Shield, Lock, Activity, Key, Save, ArrowLeft, Check, AlertCircle, Info, ChevronRight, Zap } from 'lucide-react';
 
-const SettingsPage = ({ settings, onSave, onBack }) => {
+const SettingsPage = ({ settings, onUpdateSettings, onBack }) => {
     const [activeTab, setActiveTab] = useState('account');
-    const [profile, setProfile] = useState({
-        display_name: ''
-    });
+    const [profile, setProfile] = useState({ display_name: '' });
     const [aiConfig, setAiConfig] = useState({
         model: 'gpt-4o-mini',
         temperature: 0.7,
         max_tokens: 250,
         global_instructions: ''
     });
-    const [passwords, setPasswords] = useState({
-        current: '',
-        new: '',
-        confirm: ''
-    });
+    const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' });
     const [apiKey, setApiKey] = useState('');
     const [isSaving, setIsSaving] = useState(false);
-    const [saveMessage, setSaveMessage] = useState({ text: '', type: '' });
+    const [status, setStatus] = useState({ text: '', type: '' });
 
     useEffect(() => {
         if (settings) {
             setApiKey(settings.openai_api_key || '');
-            setProfile({
-                display_name: settings.display_name || ''
-            });
+            setProfile({ display_name: settings.display_name || '' });
             setAiConfig({
                 model: settings.ai_default_model || 'gpt-4o-mini',
                 temperature: settings.ai_default_temperature ?? 0.7,
@@ -36,12 +28,12 @@ const SettingsPage = ({ settings, onSave, onBack }) => {
         }
     }, [settings]);
 
-    const handleSubmit = async (e) => {
+    const handleSaveSettings = async (e) => {
         e.preventDefault();
         setIsSaving(true);
-        setSaveMessage({ text: '', type: '' });
+        setStatus({ text: '', type: '' });
         
-        const success = await onSave({ 
+        const success = await onUpdateSettings({ 
             openai_api_key: apiKey,
             display_name: profile.display_name,
             ai_default_model: aiConfig.model,
@@ -49,378 +41,238 @@ const SettingsPage = ({ settings, onSave, onBack }) => {
             ai_default_max_tokens: aiConfig.max_tokens,
             ai_global_instructions: aiConfig.global_instructions
         });
-        setIsSaving(false);
         
+        setIsSaving(false);
         if (success) {
-            setSaveMessage({ text: 'Settings saved successfully!', type: 'success' });
-            setTimeout(() => setSaveMessage({ text: '', type: '' }), 3000);
-        } else {
-            setSaveMessage({ text: 'Failed to save settings.', type: 'error' });
-        }
-    };
-
-    const handlePasswordChange = async (e) => {
-        e.preventDefault();
-        if (passwords.new !== passwords.confirm) {
-            setSaveMessage({ text: 'New passwords do not match.', type: 'error' });
-            return;
-        }
-
-        setIsSaving(true);
-        try {
-            const token = localStorage.getItem('accessToken');
-            const response = await fetch('/api/user/password', {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    current_password: passwords.current,
-                    new_password: passwords.new
-                })
-            });
-
-            const data = await response.json();
-            setIsSaving(false);
-
-            if (data.success) {
-                setSaveMessage({ text: 'Password updated successfully!', type: 'success' });
-                setPasswords({ current: '', new: '', confirm: '' });
-                setTimeout(() => setSaveMessage({ text: '', type: '' }), 3000);
-            } else {
-                setSaveMessage({ text: data.error || 'Failed to update password.', type: 'error' });
-            }
-        } catch (error) {
-            setIsSaving(false);
-            setSaveMessage({ text: 'Network error.', type: 'error' });
+            setStatus({ text: 'Changes saved effectively.', type: 'success' });
+            setTimeout(() => setStatus({ text: '', type: '' }), 3000);
         }
     };
 
     const usagePercent = Math.min(100, ((settings?.ai_messages_used || 0) / (settings?.plan === 'pro' ? 1000 : 50)) * 100);
 
+    const tabs = [
+        { id: 'account', label: 'Account & AI', icon: SettingsIcon },
+        { id: 'usage', label: 'Plan & Usage', icon: Activity },
+        { id: 'security', label: 'Security', icon: Shield },
+    ];
+
     return (
-        <div className="settings-page-wrapper animate-fade-in">
-            <div className="settings-page-header">
-                <div className="header-left">
-                    <button className="back-btn" onClick={onBack}>
-                        <i className="fa-solid fa-arrow-left"></i>
+        <div className="max-w-5xl mx-auto animate-slide-in-top">
+            {/* Page Header */}
+            <div className="flex items-center justify-between mb-10">
+                <div className="flex items-center space-x-4">
+                    <button 
+                        onClick={() => onNavigate('dashboard')} 
+                        className="p-2 hover:bg-wink-gray-100 rounded-full transition-all text-wink-gray-400 hover:text-wink-black"
+                    >
+                        <ArrowLeft size={20} />
                     </button>
-                    <h1>Settings</h1>
+                    <h1 className="text-3xl font-black tracking-tight text-wink-black uppercase">Workspace Settings</h1>
                 </div>
-                {saveMessage.text && (
-                    <div className={`save-status-toast ${saveMessage.type}`}>
-                        <i className={`fa-solid ${saveMessage.type === 'success' ? 'fa-check-circle' : 'fa-circle-exclamation'}`}></i>
-                        {saveMessage.text}
+                {status.text && (
+                    <div className={`flex items-center space-x-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest animate-pop-in ${
+                        status.type === 'success' ? 'bg-wink-black text-wink-white' : 'bg-red-50 text-red-600 border border-red-100'
+                    }`}>
+                        {status.type === 'success' ? <Check size={14} /> : <AlertCircle size={14} />}
+                        <span>{status.text}</span>
                     </div>
                 )}
             </div>
 
-            <div className="settings-page-container">
-                <aside className="settings-sidebar">
-                    <button 
-                        className={`sidebar-tab ${activeTab === 'account' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('account')}
-                    >
-                        <i className="fa-solid fa-user-shield"></i>
-                        <span>Account & API</span>
-                    </button>
-                    <button 
-                        className={`sidebar-tab ${activeTab === 'usage' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('usage')}
-                    >
-                        <i className="fa-solid fa-chart-line"></i>
-                        <span>Plan & Usage</span>
-                    </button>
-                    <button 
-                        className={`sidebar-tab ${activeTab === 'security' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('security')}
-                    >
-                        <i className="fa-solid fa-lock"></i>
-                        <span>Security & Password</span>
-                    </button>
+            <div className="flex flex-col lg:flex-row gap-10">
+                {/* Internal Nav */}
+                <aside className="lg:w-64 space-y-1">
+                    {tabs.map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group ${
+                                activeTab === tab.id 
+                                ? 'bg-wink-black text-wink-white shadow-lg' 
+                                : 'text-wink-gray-500 hover:bg-wink-gray-100'
+                            }`}
+                        >
+                            <div className="flex items-center space-x-3">
+                                <tab.icon size={18} />
+                                <span className="font-bold text-sm uppercase tracking-tighter">{tab.label}</span>
+                            </div>
+                            <ChevronRight size={14} className={activeTab === tab.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} />
+                        </button>
+                    ))}
                 </aside>
 
-                <main className="settings-content-area">
+                {/* Content Area */}
+                <main className="flex-1 bg-wink-white border border-wink-gray-200 rounded-3xl p-8 lg:p-12 shadow-sm min-h-[500px]">
                     {activeTab === 'account' && (
-                        <div className="settings-section-card">
-                            <div className="section-header">
-                                <h3>Account & AI Configuration</h3>
-                                <p>Manage your profile and global AI behavior.</p>
+                        <form onSubmit={handleSaveSettings} className="space-y-10">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                                <div className="space-y-6">
+                                    <h3 className="text-xs font-black uppercase tracking-[0.2em] text-wink-gray-400 mb-6">Identity Profile</h3>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black uppercase text-wink-gray-500">Display Name</label>
+                                        <input
+                                            type="text"
+                                            value={profile.display_name}
+                                            onChange={(e) => setProfile({ ...profile, display_name: e.target.value })}
+                                            className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all"
+                                            placeholder="Your name or business name"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black uppercase text-wink-gray-500">Email Address</label>
+                                        <div className="flex items-center space-x-2 px-3 py-3 bg-wink-gray-100 border border-wink-gray-200 rounded-lg text-wink-gray-400 text-sm font-medium">
+                                            <User size={14} />
+                                            <span>{settings?.email}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-6">
+                                    <h3 className="text-xs font-black uppercase tracking-[0.2em] text-wink-gray-400 mb-6">Model Intelligence</h3>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black uppercase text-wink-gray-500">Preferred AI Engine</label>
+                                        <select
+                                            value={aiConfig.model}
+                                            onChange={(e) => setAiConfig({ ...aiConfig, model: e.target.value })}
+                                            className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all appearance-none cursor-pointer"
+                                        >
+                                            <option value="gpt-4o-mini">GPT-4o Mini (Efficiency)</option>
+                                            <option value="gpt-4o">GPT-4o (Max Intelligence)</option>
+                                        </select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <label className="text-[10px] font-black uppercase text-wink-gray-500">Creativity / Temperature</label>
+                                            <span className="text-xs font-bold text-wink-black">{aiConfig.temperature}</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.1"
+                                            value={aiConfig.temperature}
+                                            onChange={(e) => setAiConfig({ ...aiConfig, temperature: parseFloat(e.target.value) })}
+                                            className="w-full h-1 bg-wink-gray-100 rounded-lg appearance-none cursor-pointer accent-wink-black"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="md:col-span-2 space-y-6 pt-6 border-t border-wink-gray-100">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-wink-gray-400">Global AI Directive</h3>
+                                        <div className="flex items-center space-x-1 text-[10px] font-bold text-wink-gray-400 uppercase">
+                                            <Zap size={10} className="fill-wink-gray-400" />
+                                            <span>Universal across all pages</span>
+                                        </div>
+                                    </div>
+                                    <textarea
+                                        value={aiConfig.global_instructions}
+                                        onChange={(e) => setAiConfig({ ...aiConfig, global_instructions: e.target.value })}
+                                        placeholder="Enter instructions that should apply to all automations..."
+                                        className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-xl p-6 text-sm font-medium focus:border-wink-black outline-none transition-all min-h-[120px]"
+                                    />
+                                </div>
                             </div>
 
-                            <form onSubmit={handleSubmit} className="settings-form">
-                                <div className="settings-grid">
-                                    <div className="form-column">
-                                        <div className="settings-sub-header">
-                                            <h4><i className="fa-solid fa-user-circle"></i> Profile Settings</h4>
-                                        </div>
-                                        <div className="form-group">
-                                            <label>Full Name / Display Name</label>
-                                            <div className="info-box">
-                                                <i className="fa-solid fa-signature"></i>
-                                                <input
-                                                    type="text"
-                                                    value={profile.display_name}
-                                                    onChange={(e) => setProfile({ ...profile, display_name: e.target.value })}
-                                                    placeholder="Your name or company name"
-                                                    className="transparent-input"
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="form-group">
-                                            <label>User Identity</label>
-                                            <div className="info-box read-only">
-                                                <i className="fa-solid fa-envelope"></i>
-                                                <span>{settings?.email}</span>
-                                            </div>
-                                        </div>
+                            <button
+                                type="submit"
+                                disabled={isSaving}
+                                className="w-full bg-wink-black text-wink-white py-4 rounded-xl font-black uppercase tracking-[0.1em] hover:bg-wink-gray-800 transition-all flex items-center justify-center space-x-3 shadow-xl disabled:opacity-50"
+                            >
+                                {isSaving ? <div className="w-5 h-5 border-2 border-wink-gray-600 border-t-wink-white rounded-full animate-spin" /> : <Save size={18} />}
+                                <span>Save Workspace Configuration</span>
+                            </button>
+                        </form>
+                    )}
 
-                                        <div className="settings-sub-header mt-4">
-                                            <h4><i className="fa-solid fa-microchip"></i> AI Engine Defaults</h4>
-                                        </div>
-                                        <div className="form-group">
-                                            <label>Preferred AI Model</label>
-                                            <select 
-                                                className="page-settings-input select"
-                                                value={aiConfig.model}
-                                                onChange={(e) => setAiConfig({ ...aiConfig, model: e.target.value })}
-                                            >
-                                                <option value="gpt-4o-mini">GPT-4o Mini (Fast & Cost Efficient)</option>
-                                                <option value="gpt-4o">GPT-4o (Most Intelligent)</option>
-                                                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Legacy)</option>
-                                            </select>
-                                        </div>
-
-                                        <div className="form-group">
-                                            <label>Temperature (Creativity: {aiConfig.temperature})</label>
-                                            <div className="slider-wrapper">
-                                                <span>Balanced</span>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="1"
-                                                    step="0.1"
-                                                    value={aiConfig.temperature}
-                                                    onChange={(e) => setAiConfig({ ...aiConfig, temperature: parseFloat(e.target.value) })}
-                                                    className="settings-slider"
-                                                />
-                                                <span>Creative</span>
-                                            </div>
-                                        </div>
-
-                                        <div className="form-group">
-                                            <label>Max Tokens Per Response</label>
-                                            <input
-                                                type="number"
-                                                min="50"
-                                                max="2000"
-                                                value={aiConfig.max_tokens}
-                                                onChange={(e) => setAiConfig({ ...aiConfig, max_tokens: parseInt(e.target.value) })}
-                                                className="page-settings-input"
-                                            />
-                                            <p className="field-hint">Defines how long the AI response can be (roughly 4 characters per token).</p>
-                                        </div>
+                    {activeTab === 'usage' && (
+                        <div className="space-y-12">
+                            <div className="bg-wink-black rounded-2xl p-8 text-wink-white relative overflow-hidden group">
+                                <Activity className="absolute -right-4 -bottom-4 w-32 h-32 text-wink-gray-800 opacity-50 group-hover:scale-110 transition-transform" />
+                                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                    <div>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-wink-gray-500">Current Plan</span>
+                                        <h2 className="text-4xl font-black mt-2 uppercase tracking-tighter">{settings?.plan === 'pro' ? 'Professional' : 'Standard'}</h2>
+                                        <p className="text-wink-gray-400 mt-2 text-sm max-w-xs font-medium">Your current usage is within the parameters of your subscription.</p>
                                     </div>
-
-                                    <div className="form-column">
-                                        <div className="settings-sub-header">
-                                            <h4><i className="fa-solid fa-key"></i> API Configuration</h4>
-                                        </div>
-                                        <div className="form-group">
-                                            <label>OpenAI API Key</label>
-                                            <div className="input-with-icon">
-                                                <i className="fa-solid fa-key"></i>
-                                                <input
-                                                    type="password"
-                                                    value={apiKey}
-                                                    onChange={(e) => setApiKey(e.target.value)}
-                                                    placeholder={settings?.openai_api_key ? "••••••••••••••••" : "Paste your sk-... key"}
-                                                    className="page-settings-input"
-                                                />
-                                            </div>
-                                            <div className="key-usage-status">
-                                                {settings?.is_using_system_key ? (
-                                                    <div className="status-indicator system">
-                                                        <i className="fa-solid fa-server"></i>
-                                                        Using System Default Key (Limited Quota)
-                                                    </div>
-                                                ) : (
-                                                    <div className="status-indicator personal">
-                                                        <i className="fa-solid fa-user-check"></i>
-                                                        Using Personal API Key (Unlimited)
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        <div className="settings-sub-header mt-4">
-                                            <h4><i className="fa-solid fa-brain"></i> Global System Instructions</h4>
-                                        </div>
-                                        <div className="form-group">
-                                            <label>Primary AI Directive</label>
-                                            <textarea
-                                                value={aiConfig.global_instructions}
-                                                onChange={(e) => setAiConfig({ ...aiConfig, global_instructions: e.target.value })}
-                                                placeholder="Example: Always speak in a professional tone. Never mention competitors."
-                                                className="page-settings-input textarea"
-                                                rows="5"
-                                            ></textarea>
-                                            <p className="field-hint">This text will be added as a prefix to the AI's system prompt for ALL your pages.</p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="form-actions mt-4">
-                                    <button type="submit" className="save-settings-btn" disabled={isSaving}>
-                                        {isSaving ? <><i className="fa-solid fa-circle-notch fa-spin"></i> Saving...</> : 'Save All Changes'}
+                                    <button className="bg-wink-white text-wink-black px-8 py-3 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-wink-gray-100 transition-all shadow-lg whitespace-nowrap">
+                                        Upgrade Capacity
                                     </button>
                                 </div>
-                            </form>
+                            </div>
+
+                            <div className="space-y-8">
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-black uppercase tracking-widest text-wink-gray-400">Monthly Quota</span>
+                                        <span className="text-sm font-bold text-wink-black">{settings?.ai_messages_used || 0} / {settings?.plan === 'pro' ? '∞' : '50'}</span>
+                                    </div>
+                                    <div className="w-full h-1.5 bg-wink-gray-100 rounded-full overflow-hidden">
+                                        <div 
+                                            className="h-full bg-wink-black rounded-full transition-all duration-1000" 
+                                            style={{ width: `${usagePercent}%` }} 
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="border border-wink-gray-100 rounded-2xl p-6 bg-wink-gray-50/50">
+                                        <div className="flex items-center space-x-3 text-wink-gray-400 mb-4">
+                                            <Zap size={18} />
+                                            <span className="text-[10px] font-black uppercase tracking-widest">Efficiency</span>
+                                        </div>
+                                        <p className="text-2xl font-black text-wink-black">{(settings?.ai_tokens_used || 0).toLocaleString()}</p>
+                                        <p className="text-xs text-wink-gray-500 font-medium">Tokens processed this period</p>
+                                    </div>
+                                    <div className="border border-wink-gray-100 rounded-2xl p-6 bg-wink-gray-50/50">
+                                        <div className="flex items-center space-x-3 text-wink-gray-400 mb-4">
+                                            <Lock size={18} />
+                                            <span className="text-[10px] font-black uppercase tracking-widest">Status</span>
+                                        </div>
+                                        <p className="text-2xl font-black text-wink-black uppercase tracking-tighter">Active</p>
+                                        <p className="text-xs text-wink-gray-500 font-medium">Subscription is healthy</p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
 
                     {activeTab === 'security' && (
-                        <div className="settings-section-card animate-fade-in">
-                            <div className="section-header">
-                                <h3>Security & Access</h3>
-                                <p>Manage your account password and security preferences.</p>
+                        <div className="space-y-10">
+                            <div className="bg-wink-gray-50 border border-wink-gray-100 rounded-2xl p-8 flex items-start space-x-6">
+                                <div className="p-3 bg-wink-white border border-wink-gray-200 rounded-xl shadow-sm">
+                                    <Key size={24} className="text-wink-black" />
+                                </div>
+                                <div>
+                                    <h4 className="text-sm font-black uppercase tracking-tighter text-wink-black mb-1">OpenAI API Key</h4>
+                                    <p className="text-xs text-wink-gray-500 font-medium mb-6">Connect your personal key for unlimited messaging capacity.</p>
+                                    <div className="flex items-center space-x-2">
+                                        <input
+                                            type="password"
+                                            value={apiKey}
+                                            onChange={(e) => setApiKey(e.target.value)}
+                                            placeholder="sk-...."
+                                            className="bg-wink-white border border-wink-gray-200 rounded-lg px-4 py-2 text-xs font-mono focus:border-wink-black outline-none transition-all w-64 shadow-sm"
+                                        />
+                                        <button className="bg-wink-black text-wink-white px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-wink-gray-800 transition-all">Update</button>
+                                    </div>
+                                </div>
                             </div>
 
-                            <form onSubmit={handlePasswordChange} className="settings-form max-w-lg">
-                                <div className="form-group">
-                                    <label>Current Password</label>
-                                    <div className="input-with-icon">
-                                        <i className="fa-solid fa-shield-halved"></i>
-                                        <input
-                                            type="password"
-                                            value={passwords.current}
-                                            onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
-                                            className="page-settings-input"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="form-group">
-                                    <label>New Password</label>
-                                    <div className="input-with-icon">
-                                        <i className="fa-solid fa-lock"></i>
-                                        <input
-                                            type="password"
-                                            value={passwords.new}
-                                            onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
-                                            className="page-settings-input"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="form-group">
-                                    <label>Confirm New Password</label>
-                                    <div className="input-with-icon">
-                                        <i className="fa-solid fa-check-double"></i>
-                                        <input
-                                            type="password"
-                                            value={passwords.confirm}
-                                            onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
-                                            className="page-settings-input"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="form-actions mt-4">
-                                    <button type="submit" className="save-settings-btn" disabled={isSaving}>
-                                        {isSaving ? <><i className="fa-solid fa-circle-notch fa-spin"></i> Updating...</> : 'Update Password'}
+                            <div className="pt-10 border-t border-wink-gray-100">
+                                <h4 className="text-xs font-black uppercase tracking-[0.2em] text-wink-gray-400 mb-8">Access Management</h4>
+                                <div className="space-y-6 max-w-sm">
+                                    <button className="w-full flex items-center justify-between px-6 py-4 border border-wink-gray-200 rounded-xl hover:border-wink-black text-sm font-bold text-wink-black transition-all group">
+                                        <span>Change Password</span>
+                                        <Lock size={16} className="text-wink-gray-400 group-hover:text-wink-black" />
+                                    </button>
+                                    <button className="w-full flex items-center justify-between px-6 py-4 border border-wink-gray-200 rounded-xl hover:border-wink-black text-sm font-bold text-wink-black transition-all group">
+                                        <span>Two-Factor Authentication</span>
+                                        <Shield size={16} className="text-wink-gray-400 group-hover:text-wink-black" />
                                     </button>
                                 </div>
-
-                                <div className="security-notice mt-6">
-                                    <div className="notice-box danger">
-                                        <i className="fa-solid fa-warning"></i>
-                                        <div>
-                                            <strong>Danger Zone</strong>
-                                            <p>If you lose your password, and do not have an API key configured, we may not be able to recover your automated page responses.</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </form>
-                        </div>
-                    )}
-
-                    {activeTab === 'usage' && (
-                        <div className="settings-section-card">
-                            <div className="section-header">
-                                <h3>Usage Tracking</h3>
-                                <p>Monitor your AI usage and current subscription status.</p>
                             </div>
-
-                            <div className="plan-overview-card">
-                                <div className="plan-top">
-                                    <div className="plan-title">
-                                        <span className="badge">Active Plan</span>
-                                        <h2>{settings?.plan === 'pro' ? 'Professional' : 'Free Tier'}</h2>
-                                    </div>
-                                    <div className="plan-icon-large">
-                                        <i className={`fa-solid ${settings?.plan === 'pro' ? 'fa-chess-king' : 'fa-paper-plane'}`}></i>
-                                    </div>
-                                </div>
-                                <div className="plan-perks">
-                                    <ul>
-                                        <li><i className="fa-solid fa-check"></i> Multi-page support</li>
-                                        <li><i className="fa-solid fa-check"></i> Keyword automation</li>
-                                        <li><i className="fa-solid ${settings?.plan === 'pro' ? 'fa-check' : 'fa-xmark'}"></i> {settings?.plan === 'pro' ? 'Unlimited message history' : '50 messages / month'}</li>
-                                    </ul>
-                                </div>
-                            </div>
-
-                            <div className="usage-meter-box">
-                                <div className="meter-label">
-                                    <span>AI Monthly Quota</span>
-                                    <span className="meter-numbers">
-                                        <strong>{settings?.ai_messages_used || 0}</strong> / {settings?.plan === 'pro' ? '∞' : '50'}
-                                    </span>
-                                </div>
-                                <div className="progress-track">
-                                    <div 
-                                        className={`progress-fill ${usagePercent > 80 ? 'warning' : ''} ${usagePercent >= 100 ? 'danger' : ''}`}
-                                        style={{ width: `${usagePercent}%` }}
-                                    ></div>
-                                </div>
-                                <div className="meter-footer">
-                                    <span className="reset-date">
-                                        <i className="fa-solid fa-calendar-day"></i>
-                                        Next reset: {settings?.ai_messages_reset_at ? new Date(settings.ai_messages_reset_at).toLocaleDateString() : 'N/A'}
-                                    </span>
-                                </div>
-                            </div>
-
-                            <div className="token-usage-card animate-fade-in">
-                                <div className="token-stat">
-                                    <div className="token-icon">
-                                        <i className="fa-solid fa-microchip"></i>
-                                    </div>
-                                    <div className="token-info">
-                                        <label>Total Brain Power Consumed</label>
-                                        <h3>{(settings?.ai_tokens_used || 0).toLocaleString()} <small>Tokens</small></h3>
-                                    </div>
-                                </div>
-                                <div className="token-explanation">
-                                    <i className="fa-solid fa-circle-info"></i>
-                                    <p>Tokens are the core billing units for AI. 50 tokens in Arabic is roughly 30-40 words. This tracking helps you optimize your "Max Tokens" setting.</p>
-                                </div>
-                            </div>
-
-                            {settings?.plan !== 'pro' && (
-                                <div className="upgrade-prompt-card">
-                                    <div className="prompt-text">
-                                        <h4>Need more capacity?</h4>
-                                        <p>Upgrade to Pro for higher limits and priority AI support.</p>
-                                    </div>
-                                    <button className="upgrade-action-btn">Upgrade Now</button>
-                                </div>
-                            )}
                         </div>
                     )}
                 </main>
