@@ -513,20 +513,29 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
         const pagesRes = await axios.get(`https://graph.facebook.com/v19.0/me/accounts`, {
             params: { 
                 access_token: longLivedUserToken,
-                fields: 'id,name,access_token,instagram_business_account{id,name,username}'
+                fields: 'id,name,access_token,instagram_business_account{id,name,username,ig_id}'
             }
         });
+
+        console.log('🔍 [DEBUG IG DISCOVERY] Raw Meta response for /me/accounts:', JSON.stringify(pagesRes.data, null, 2));
 
         const igAccounts = [];
         for (const page of pagesRes.data.data) {
             if (page.instagram_business_account) {
+                const igAccount = page.instagram_business_account;
+                
+                // Meta ID Mismatch Logic:
+                // We store 'id' as the primary page_id, but we also save 'ig_id' as ig_user_id.
+                // Our database query now checks both.
                 igAccounts.push({
-                    id: page.instagram_business_account.id,   // IG User ID — this is what webhook events use
-                    name: page.instagram_business_account.name || `@${page.instagram_business_account.username}`,
-                    access_token: page.access_token,          // The Facebook Page token (used for IG messaging API)
+                    id: igAccount.id, 
+                    name: igAccount.name || `@${igAccount.username}`,
+                    access_token: page.access_token,
                     platform: 'instagram',
-                    ig_user_id: page.instagram_business_account.id
+                    ig_user_id: igAccount.ig_id || igAccount.id // Store the secondary ID if available
                 });
+
+                console.log(`📌 Discovered IG: ${igAccount.name} | node_id: ${igAccount.id} | ig_id: ${igAccount.ig_id} | linked_page: ${page.id}`);
             }
         }
 

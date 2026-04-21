@@ -43,7 +43,7 @@ export async function addPage(ownerId, pageId, pageToken, pageName, aiContextLim
  */
 export async function getPage(pageId) {
   const result = await query(
-    'SELECT * FROM pages WHERE page_id = $1',
+    'SELECT * FROM pages WHERE page_id = $1 OR ig_user_id = $1',
     [pageId]
   );
   return result.rows[0] || null;
