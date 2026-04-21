@@ -447,12 +447,13 @@ app.get('/api/auth/facebook/url', requireAuth, (req, res) => {
 });
 
 app.get('/api/auth/instagram/url', requireAuth, (req, res) => {
-    const appId = process.env.IG_APP_ID;
+    // Use dedicated IG app if configured, otherwise fall back to main FB app
+    const appId = process.env.IG_APP_ID || process.env.FB_APP_ID;
     const redirectUri = process.env.IG_REDIRECT_URI;
     const state = req.userId;
     
     if (!appId || !redirectUri) {
-        return res.status(500).json({ success: false, error: 'Instagram app not configured. Set IG_APP_ID and IG_REDIRECT_URI in .env' });
+        return res.status(500).json({ success: false, error: 'Instagram app not configured. Set IG_REDIRECT_URI in .env' });
     }
 
     const scopes = [
