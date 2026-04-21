@@ -115,7 +115,7 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
                         disabled={isOAuthLoading}
                         className="flex items-center space-x-2 bg-wink-black text-wink-white px-5 py-2.5 rounded-lg font-bold text-sm uppercase tracking-tight hover:bg-wink-gray-800 transition-all disabled:opacity-50"
                     >
-                        {isOAuthLoading ? <Loader2 size={16} className="animate-spin" /> : <Facebook size={16} />}
+                        {isOAuthLoading ? <Loader2 size={16} className="animate-spin" /> : <Globe size={16} />}
                         <span>Connect FB</span>
                     </button>
                     <button
@@ -123,7 +123,7 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
                         disabled={isOAuthLoading}
                         className="flex items-center space-x-2 bg-wink-black text-wink-white px-5 py-2.5 rounded-lg font-bold text-sm uppercase tracking-tight hover:bg-wink-gray-800 transition-all disabled:opacity-50"
                     >
-                        {isOAuthLoading ? <Loader2 size={16} className="animate-spin" /> : <Instagram size={16} />}
+                        {isOAuthLoading ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />}
                         <span>Connect IG</span>
                     </button>
                     <button
