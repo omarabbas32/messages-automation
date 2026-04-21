@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Settings as SettingsIcon, Shield, Lock, Activity, Key, Save, ArrowLeft, Check, AlertCircle, Info, ChevronRight, Zap } from 'lucide-react';
 
-const SettingsPage = ({ settings, onUpdateSettings, onBack }) => {
+const SettingsPage = ({ settings, onUpdateSettings, onNavigate }) => {
     const [activeTab, setActiveTab] = useState('account');
     const [profile, setProfile] = useState({ display_name: '' });
     const [aiConfig, setAiConfig] = useState({

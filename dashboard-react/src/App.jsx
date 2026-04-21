@@ -357,6 +357,7 @@ function DashboardContent() {
         <SettingsPage 
           settings={userSettings} 
           onUpdateSettings={handleUpdateSettings}
+          onNavigate={setActiveView}
         />
       )}
     </MainLayout>
