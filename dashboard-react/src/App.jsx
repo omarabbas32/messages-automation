@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import Navbar from './components/Navbar/Navbar';
+import MainLayout from './layouts/MainLayout';
+import DashboardOverview from './components/Dashboard/DashboardOverview';
 import PagesSection from './sections/PagesSection';
 import RulesSection from './sections/RulesSection';
 import SettingsPage from './components/SettingsPage/SettingsPage';
@@ -14,10 +15,10 @@ function App() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center" style={{ height: '100vh', background: '#0f0f0f', color: '#fff' }}>
-        <div style={{ textAlign: 'center' }}>
-          <i className="fa-solid fa-circle-notch fa-spin fa-3x mb-4"></i>
-          <h2 style={{ marginTop: '20px' }}>Wink is waking up...</h2>
+      <div className="flex items-center justify-center bg-wink-black min-h-screen">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-wink-gray-700 border-t-wink-white rounded-full animate-spin mx-auto mb-6"></div>
+          <h2 className="text-wink-white font-bold tracking-tight uppercase">Wink is waking up...</h2>
         </div>
       </div>
     );
@@ -49,7 +50,6 @@ function DashboardContent() {
             'Authorization': `Bearer ${token}`,
         };
         
-        // Don't set Content-Type if we're sending FormData (let browser set boundary)
         if (!(options.body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';
         }
@@ -61,13 +61,12 @@ function DashboardContent() {
       let token = await getToken();
       let response = await execute(token);
       
-      // If 401, token might be expired. Try to refresh once.
       if (response.status === 401) {
           console.warn("🔐 Access token expired, attempting refresh...");
           await refreshSession(); 
-          token = await getToken(); // Get the new token
+          token = await getToken();
           if (token) {
-              response = await execute(token); // Retry original request
+              response = await execute(token);
           }
       }
 
@@ -114,11 +113,6 @@ function DashboardContent() {
       if (result.success) setUserSettings(result.data);
     } catch (error) {}
   };
-
-  // Filter rules for selected page
-  const currentRules = selectedPageId
-    ? allRules.filter(r => r.page_id === selectedPageId)
-    : [];
 
   // Page handlers
   const handleUpdateAI = async (id, aiData) => {
@@ -233,7 +227,10 @@ function DashboardContent() {
       text: `Delete "${name}"?`,
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: '#d33'
+      confirmButtonColor: '#000',
+      cancelButtonColor: '#eee',
+      confirmButtonText: 'Yes, delete it',
+      cancelButtonText: 'Cancel'
     }).then(async (result) => {
       if (result.isConfirmed) {
         try {
@@ -315,57 +312,55 @@ function DashboardContent() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center p-20" style={{ height: '100vh', background: 'var(--bg-secondary)' }}>
-        <div style={{ textAlign: 'center' }}>
-          <i className="fa-solid fa-circle-notch fa-spin fa-3x mb-4 opacity-50"></i>
-          <h2 style={{ color: '#888' }}>Fetching your workspace...</h2>
+      <div className="flex items-center justify-center p-20 min-h-screen bg-wink-gray-50">
+        <div className="text-center">
+          <div className="w-10 h-10 border-2 border-wink-gray-200 border-t-wink-black rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-wink-gray-500 font-medium">Fetching your workspace...</h2>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="app">
-      <Navbar 
-        onNavigate={setActiveView} 
-        activeView={activeView}
-        onLogout={logout}
-        userEmail={user.email}
-      />
-
-      <main className="content">
-        {activeView === 'dashboard' ? (
-          <>
-            <PagesSection 
-              pages={pages} 
-              onAddPage={handleAddPage}
-              onBulkConnect={handleBulkConnect}
-              onGetFBAuthUrl={handleGetFBAuthUrl}
-              onGetIGAuthUrl={handleGetIGAuthUrl}
-              onDeletePage={handleDeletePage}
-              onUpdateAI={handleUpdateAI}
-              onUpdateKnowledge={handleUpdateKnowledge}
-              onUpdatePage={handleUpdatePage}
-              onUploadInventory={handleUploadInventory}
-            />
-
-            <RulesSection
-              pages={pages}
-              rules={allRules}
-              selectedPageId={selectedPageId}
-              onSelectPage={setSelectedPageId}
-              onAddRule={handleAddRule}
-              onDeleteRule={handleDeleteRule}
-            />
-          </>
-        ) : (
-          <SettingsPage 
-            settings={userSettings} 
-            onUpdateSettings={handleUpdateSettings}
+    <MainLayout
+      activeView={activeView}
+      onNavigate={setActiveView}
+      onLogout={logout}
+      userEmail={user.email}
+    >
+      {activeView === 'dashboard' ? (
+        <div className="space-y-12">
+          <DashboardOverview pages={pages} />
+          
+          <PagesSection 
+            pages={pages} 
+            onAddPage={handleAddPage}
+            onBulkConnect={handleBulkConnect}
+            onGetFBAuthUrl={handleGetFBAuthUrl}
+            onGetIGAuthUrl={handleGetIGAuthUrl}
+            onDeletePage={handleDeletePage}
+            onUpdateAI={handleUpdateAI}
+            onUpdateKnowledge={handleUpdateKnowledge}
+            onUpdatePage={handleUpdatePage}
+            onUploadInventory={handleUploadInventory}
           />
-        )}
-      </main>
-    </div>
+
+          <RulesSection
+            pages={pages}
+            rules={allRules}
+            selectedPageId={selectedPageId}
+            onSelectPage={setSelectedPageId}
+            onAddRule={handleAddRule}
+            onDeleteRule={handleDeleteRule}
+          />
+        </div>
+      ) : (
+        <SettingsPage 
+          settings={userSettings} 
+          onUpdateSettings={handleUpdateSettings}
+        />
+      )}
+    </MainLayout>
   );
 }
 
