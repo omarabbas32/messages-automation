@@ -510,37 +510,35 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
         const longLivedUserToken = longLivedRes.data.access_token;
 
         // 3. Get the Facebook Pages linked to this user, expanding to their IG Business Accounts
-        // We're adding 'user_id' here which is often the one used in Webhooks
+        // Removing 'user_id' as it caused a 400 error. ig_id and page.id are safer.
         const pagesRes = await axios.get(`https://graph.facebook.com/v19.0/me/accounts`, {
             params: { 
                 access_token: longLivedUserToken,
-                fields: 'id,name,access_token,instagram_business_account{id,name,username,ig_id,user_id}'
+                fields: 'id,name,access_token,instagram_business_account{id,name,username,ig_id}'
             }
         });
 
-        // SUPER DEEP DEBUG: Log the full response to finally find that missing ID
-        console.log('🔍 [SUPER DEEP DISCOVERY] Meta Accounts Data:', JSON.stringify(pagesRes.data, null, 2));
+        // DEEP DEBUG: Log the full response to find the mismatch
+        console.log('🔍 [IG DISCOVERY DEBUG] Meta Accounts Data:', JSON.stringify(pagesRes.data, null, 2));
 
         const igAccounts = [];
         for (const page of pagesRes.data.data) {
             if (page.instagram_business_account) {
                 const igAccount = page.instagram_business_account;
                 
-                // Final ID Strategy:
-                // We use Node ID as primary.
-                // We use 'user_id' or 'ig_id' as the ig_user_id fallback.
-                // Research shows 'user_id' inside the business account object is most likely to match entry.id.
-                const webhookId = igAccount.user_id || igAccount.ig_id || page.id;
+                // We store the Node ID (id) and use Legacy ID (ig_id) or Page ID as fallback.
+                // One of these MUST match the entry.id in the webhook.
+                const fallbackId = igAccount.ig_id || page.id;
 
                 igAccounts.push({
                     id: igAccount.id, 
                     name: igAccount.name || `@${igAccount.username}`,
                     access_token: page.access_token,
                     platform: 'instagram',
-                    ig_user_id: webhookId
+                    ig_user_id: fallbackId 
                 });
 
-                console.log(`📌 DISCOVERY RESULT: ${igAccount.name} | node_id: ${igAccount.id} | webhook_ready_id: ${webhookId}`);
+                console.log(`📌 DISCOVERY RESULT: ${igAccount.name} | node_id: ${igAccount.id} | fallback_id: ${fallbackId} | page_id: ${page.id}`);
             }
         }
 
