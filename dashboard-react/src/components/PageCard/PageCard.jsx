@@ -80,9 +80,16 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage,
     };
 
     return (
-        <article className="page-card animate-slide-up">
+        <article className={`page-card animate-slide-up ${page.platform === 'instagram' ? 'platform-instagram' : 'platform-facebook'}`}>
             <div className="page-card-header">
-                <h3 className="page-card-title">{page.page_name}</h3>
+                <div className="flex items-center gap-2">
+                    {page.platform === 'instagram' ? (
+                        <i className="fa-brands fa-instagram text-2xl" style={{ color: '#E1306C' }}></i>
+                    ) : (
+                        <i className="fa-brands fa-facebook text-2xl" style={{ color: '#1877F2' }}></i>
+                    )}
+                    <h3 className="page-card-title">{page.page_name}</h3>
+                </div>
                 <span className={`badge ${aiEnabled ? 'badge-active' : 'badge-inactive'}`}>
                     {aiEnabled ? 'AI Active' : 'AI Paused'}
                 </span>
@@ -91,7 +98,7 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage,
             <div className="page-card-body">
                 <div className="page-info">
                     <div className="page-info-item">
-                        <span className="page-info-label">Page ID:</span>
+                        <span className="page-info-label">{page.platform === 'instagram' ? 'IG ID:' : 'Page ID:'}</span>
                         <code className="page-info-value">{page.page_id}</code>
                     </div>
                     <div className="page-info-item">
@@ -112,17 +119,17 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage,
                         <div className="settings-section mb-4">
                             <h5 className="settings-subtitle">General Settings</h5>
                             <div className="form-group mb-2">
-                                <label>Page Name</label>
+                                <label>{page.platform === 'instagram' ? 'Account Name' : 'Page Name'}</label>
                                 <input 
                                     type="text"
                                     value={pageName}
                                     onChange={(e) => setPageName(e.target.value)}
                                     className="form-input"
-                                    placeholder="Facebook Page Name"
+                                    placeholder={page.platform === 'instagram' ? "Instagram Account Name" : "Facebook Page Name"}
                                 />
                             </div>
                             <div className="form-group">
-                                <label>New Page Access Token</label>
+                                <label>New {page.platform === 'instagram' ? 'Page' : 'Page'} Access Token</label>
                                 <input 
                                     type="password"
                                     value={pageToken}
@@ -130,7 +137,11 @@ function PageCard({ page, onDelete, onUpdateAI, onUpdateKnowledge, onUpdatePage,
                                     className="form-input"
                                     placeholder="Paste new token here to update (EAAG...)"
                                 />
-                                <small className="form-hint">Leave blank to keep current token. Required if token expired.</small>
+                                <small className="form-hint">
+                                    {page.platform === 'instagram' 
+                                        ? "Instagram uses the parent Facebook Page's token." 
+                                        : "Leave blank to keep current token. Required if token expired."}
+                                </small>
                             </div>
                         </div>
 

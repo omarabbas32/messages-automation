@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import PageCard from '../components/PageCard/PageCard';
 import './PagesSection.css';
 
-function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onDeletePage, onUpdateAI, onUpdateKnowledge, onUpdatePage, onUploadInventory }) {
+function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIGAuthUrl, onDeletePage, onUpdateAI, onUpdateKnowledge, onUpdatePage, onUploadInventory }) {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [isOAuthLoading, setIsOAuthLoading] = useState(false);
     const [discoveredPages, setDiscoveredPages] = useState([]);
@@ -47,6 +47,28 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onDelet
         }
     };
 
+    const handleConnectIG = async () => {
+        try {
+            setIsOAuthLoading(true);
+            const authUrl = await onGetIGAuthUrl();
+            
+            if (authUrl) {
+                const width = 600, height = 700;
+                const left = window.screen.width / 2 - width / 2;
+                const top = window.screen.height / 2 - height / 2;
+                
+                window.open(authUrl, 'instagram-login', `width=${width},height=${height},left=${left},top=${top}`);
+            } else {
+                window.Swal.fire('Error', 'Failed to generate Instagram login link', 'error');
+            }
+        } catch (error) {
+            console.error('IG Auth Error:', error);
+            window.Swal.fire('Error', 'Could not initiate Instagram Login', 'error');
+        } finally {
+            setIsOAuthLoading(false);
+        }
+    };
+
     const handleMessage = useCallback((event) => {
         // Allow messages from our known trusted domains (ngrok backend or same localhost)
         const trustedOrigins = [
@@ -57,8 +79,8 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onDelet
         
         if (!trustedOrigins.includes(event.origin)) return;
         
-        if (event.data?.type === 'FB_AUTH_SUCCESS') {
-            console.log('✅ FB Auth Success received:', event.data.pages);
+        if (event.data?.type === 'FB_AUTH_SUCCESS' || event.data?.type === 'IG_AUTH_SUCCESS') {
+            console.log(`✅ ${event.data.type} received:`, event.data.pages);
             const fbPages = event.data.pages;
             // Filter out pages already added
             const existingIds = pages.map(p => p.page_id);
@@ -68,7 +90,7 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onDelet
             setSelectedPageIds(newPages.map(p => p.id)); // Select all by default
             
             if (newPages.length === 0) {
-                window.Swal.fire('Notice', 'All your Facebook pages are already connected!', 'info');
+                window.Swal.fire('Notice', 'All your accounts are already connected!', 'info');
             }
         }
     }, [pages]);
@@ -111,7 +133,15 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onDelet
                         disabled={isOAuthLoading}
                     >
                         {isOAuthLoading ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-brands fa-facebook"></i>}
-                        Connect Facebook
+                        Connect FB
+                    </button>
+                    <button
+                        className="btn btn-instagram"
+                        onClick={handleConnectIG}
+                        disabled={isOAuthLoading}
+                    >
+                        {isOAuthLoading ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-brands fa-instagram"></i>}
+                        Connect IG
                     </button>
                     <button
                         className="btn btn-outline"
@@ -138,10 +168,12 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onDelet
                                 >
                                     <div className="page-check">
                                         <i className={`fa-solid ${selectedPageIds.includes(page.id) ? 'fa-square-check' : 'fa-square'}`}></i>
+                                        {page.platform === 'instagram' && <i className="fa-brands fa-instagram ml-2" style={{ color: '#E1306C' }}></i>}
+                                        {(!page.platform || page.platform === 'facebook') && <i className="fa-brands fa-facebook ml-2" style={{ color: '#1877F2' }}></i>}
                                     </div>
                                     <div className="page-info-row">
                                         <span className="page-name">{page.name}</span>
-                                        <span className="page-id">ID: {page.id}</span>
+                                        <span className="page-id">{page.platform === 'instagram' ? 'IG ID' : 'Page ID'}: {page.id}</span>
                                     </div>
                                 </div>
                             ))}

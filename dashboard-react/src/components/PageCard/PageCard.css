@@ -14,6 +14,14 @@
     justify-content: space-between;
 }
 
+.page-card.platform-instagram {
+    border-left: 4px solid #E1306C;
+}
+
+.page-card.platform-facebook {
+    border-left: 4px solid #1877F2;
+}
+
 .page-card::before {
     content: '';
     position: absolute;
@@ -21,9 +29,15 @@
     left: 0;
     width: 100%;
     height: 4px;
-    background: linear-gradient(90deg, var(--color-black), transparent);
-    opacity: 0;
     transition: opacity var(--transition-base);
+}
+
+.page-card.platform-instagram::before {
+    background: linear-gradient(90deg, #E1306C, transparent);
+}
+
+.page-card.platform-facebook::before {
+    background: linear-gradient(90deg, #1877F2, transparent);
 }
 
 .page-card:hover {

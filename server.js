@@ -94,15 +94,17 @@ app.get("/webhook", (req, res) => {
 app.post("/webhook", async (req, res) => {
     const body = req.body;
 
-    // DEBUG: Log every incoming request to see what Facebook is sending
+    // DEBUG: Log every incoming request to see what Facebook/Instagram is sending
     console.log("🔍 [DEBUG WEBHOOK] Incoming POST request:");
     console.log(JSON.stringify(body, null, 2));
 
-    if (body.object === "page") {
+    if (body.object === "page" || body.object === "instagram") {
+        const isInstagram = body.object === "instagram";
+        
         // Process each entry
         for (const entry of body.entry) {
-            // Get the page that received the message
-            const pageId = entry.id;
+            // For FB, id is the pageId. For IG, it's also the account ID.
+            const accountId = entry.id;
 
             // Process each messaging event
             for (const event of entry.messaging || []) {
@@ -110,8 +112,8 @@ app.post("/webhook", async (req, res) => {
                 const message = event.message?.text;
 
                 if (message) {
-                    console.log(`📨 Message from ${senderId} to Page ${pageId}: "${message}"`);
-                    await handleMessage(pageId, senderId, message);
+                    console.log(`📨 [${isInstagram ? 'IG' : 'FB'}] Message from ${senderId} to ${accountId}: "${message}"`);
+                    await handleMessage(accountId, senderId, message);
                 }
             }
         }
@@ -155,7 +157,7 @@ async function handleMessage(pageId, senderId, message) {
     for (const rule of rules) {
       if (msgLower.includes(rule.keyword.toLowerCase())) {
         console.log(`✅ Keyword matched: "${rule.keyword}"`);
-        await sendMessage(page.page_token, senderId, rule.reply);
+        await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId);
         return;
       }
     }
@@ -167,7 +169,7 @@ async function handleMessage(pageId, senderId, message) {
       const fallback = page.ai_enabled
         ? "شكراً لرسالتك! سيتم الرد عليك قريباً."
         : "شكراً لرسالتك! سيتم الرد عليك من قبل فريق الدعم قريباً.";
-      await sendMessage(page.page_token, senderId, fallback);
+      await sendMessage(page.page_token, senderId, fallback, page.platform, pageId);
       return;
     }
 
@@ -239,7 +241,7 @@ async function handleMessage(pageId, senderId, message) {
       await db.saveConversation(pageId, senderId, "user", message);
       await db.saveConversation(pageId, senderId, "assistant", aiResponse);
 
-      await sendMessage(page.page_token, senderId, aiResponse);
+      await sendMessage(page.page_token, senderId, aiResponse, page.platform, pageId);
       console.log("✅ AI response sent");
 
       // 4e. Increment user usage count
@@ -249,7 +251,8 @@ async function handleMessage(pageId, senderId, message) {
       console.error("❌ OpenAI error:", error.message);
       await sendMessage(
         page.page_token, senderId,
-        "عذراً، حدث خطأ مؤقت. يرجى المحاولة لاحقاً."
+        "عذراً، حدث خطأ مؤقت. يرجى المحاولة لاحقاً.",
+        page.platform, pageId
       );
     }
 
@@ -258,18 +261,25 @@ async function handleMessage(pageId, senderId, message) {
   }
 }
 
-async function sendMessage(pageToken, senderId, text) {
+async function sendMessage(pageToken, senderId, text, platform = 'facebook', accountId = null) {
     try {
+        let url = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
+        
+        // Instagram uses a different endpoint format
+        if (platform === 'instagram' && accountId) {
+            url = `https://graph.facebook.com/v19.0/${accountId}/messages?access_token=${pageToken}`;
+        }
+
         await axios.post(
-            `https://graph.facebook.com/v17.0/me/messages?access_token=${pageToken}`,
+            url,
             {
                 recipient: { id: senderId },
                 message: { text },
             }
         );
-        console.log(`✉️ Reply sent to ${senderId}`);
+        console.log(`✉️ [${platform}] Reply sent to ${senderId}`);
     } catch (error) {
-        console.error("❌ Error sending message:", error.response?.data || error.message);
+        console.error(`❌ Error sending ${platform} message:`, error.response?.data || error.message);
     }
 }
 
@@ -420,7 +430,7 @@ app.post('/api/auth/logout', async (req, res) => {
 
 app.get('/api/auth/facebook/url', requireAuth, (req, res) => {
     const appId = process.env.FB_APP_ID;
-    const redirectUri = process.env.FB_REDIRECT_URI; // Must match exactly what's in Facebook App settings
+    const redirectUri = process.env.FB_REDIRECT_URI; 
     const state = req.userId;
     
     const scopes = [
@@ -431,9 +441,105 @@ app.get('/api/auth/facebook/url', requireAuth, (req, res) => {
         'email'
     ];
 
-    const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&scope=${scopes.join(',')}`;
+    const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&scope=${scopes.join(',')}`;
     
     res.json({ success: true, url: authUrl });
+});
+
+app.get('/api/auth/instagram/url', requireAuth, (req, res) => {
+    const appId = process.env.FB_APP_ID;
+    const redirectUri = process.env.IG_REDIRECT_URI || process.env.FB_REDIRECT_URI; 
+    const state = req.userId;
+    
+    const scopes = [
+        'instagram_basic',
+        'instagram_manage_messages',
+        'pages_show_list',
+        'pages_read_engagement',
+        'public_profile'
+    ];
+
+    const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&scope=${scopes.join(',')}`;
+    
+    res.json({ success: true, url: authUrl });
+});
+
+app.get('/api/auth/instagram/callback', async (req, res) => {
+    const { code, state: userId } = req.query;
+    
+    if (!code) return res.status(400).send("Authorization failed: No code provided.");
+
+    try {
+        const redirectUri = process.env.IG_REDIRECT_URI || process.env.FB_REDIRECT_URI;
+
+        // 1. Exchange code for user access token
+        const tokenRes = await axios.get(`https://graph.facebook.com/v19.0/oauth/access_token`, {
+            params: {
+                client_id: process.env.FB_APP_ID,
+                client_secret: process.env.FB_APP_SECRET,
+                redirect_uri: redirectUri,
+                code
+            }
+        });
+
+        const userAccessToken = tokenRes.data.access_token;
+
+        // 2. Exchange for long-lived user token
+        const longLivedRes = await axios.get(`https://graph.facebook.com/v19.0/oauth/access_token`, {
+            params: {
+                grant_type: 'fb_exchange_token',
+                client_id: process.env.FB_APP_ID,
+                client_secret: process.env.FB_APP_SECRET,
+                fb_exchange_token: userAccessToken
+            }
+        });
+
+        const longLivedUserToken = longLivedRes.data.access_token;
+
+        // 3. Get Pages that have linked Instagram accounts
+        const pagesRes = await axios.get(`https://graph.facebook.com/v19.0/me/accounts`, {
+            params: { 
+                access_token: longLivedUserToken,
+                fields: 'id,name,access_token,instagram_business_account{id,name,username}'
+            }
+        });
+
+        const igAccounts = [];
+        for (const page of pagesRes.data.data) {
+            if (page.instagram_business_account) {
+                igAccounts.push({
+                    id: page.instagram_business_account.id, // The IG User ID
+                    name: page.instagram_business_account.name || page.instagram_business_account.username,
+                    access_token: page.access_token, // IG uses the Page Access Token for messaging
+                    platform: 'instagram',
+                    ig_user_id: page.instagram_business_account.id
+                });
+            }
+        }
+
+        res.send(`
+            <html>
+            <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #0f0f0f; color: white;">
+                <script>
+                    const pages = ${JSON.stringify(igAccounts)};
+                    if (window.opener) {
+                        window.opener.postMessage({ type: 'IG_AUTH_SUCCESS', pages }, '*');
+                        window.close();
+                    } else {
+                        document.body.innerHTML = '<h2>✅ Instagram Connected! You can close this window.</h2>';
+                    }
+                </script>
+                <div style="text-align: center;">
+                    <h2>Connection successful!</h2>
+                    <p>Closing window...</p>
+                </div>
+            </body>
+            </html>
+        `);
+    } catch (error) {
+        console.error('❌ IG OAuth Error:', error.response?.data || error.message);
+        res.status(500).send("Instagram Authentication Failed. Check server logs.");
+    }
 });
 
 app.get('/api/auth/facebook/callback', async (req, res) => {
@@ -535,22 +641,34 @@ app.post("/api/pages/bulk", requireAuth, async (req, res) => {
         for (const p of pages) {
             try {
                 // 1. Add/Update page in DB
-                const result = await db.addPage(req.userId, p.id, p.access_token, p.name);
+                const result = await db.addPage(
+                    req.userId, 
+                    p.id, 
+                    p.access_token, 
+                    p.name, 
+                    5, 
+                    p.platform || 'facebook', 
+                    p.ig_user_id || null
+                );
                 
                 if (result.success) {
-                    console.log(`✅ Page ${p.name} (${p.id}) saved/updated.`);
+                    console.log(`✅ ${p.platform === 'instagram' ? 'IG Account' : 'Page'} ${p.name} (${p.id}) saved/updated.`);
                 } else {
-                    console.warn(`⚠️ Page ${p.name} save result:`, result.error);
+                    console.warn(`⚠️ ${p.name} save result:`, result.error);
                 }
 
-                // 2. Subscribe webhook to page messages
-                await axios.post(`https://graph.facebook.com/v18.0/${p.id}/subscribed_apps`, null, {
+                // 2. Subscribe webhook
+                const subscribeUrl = p.platform === 'instagram' 
+                    ? `https://graph.facebook.com/v19.0/${p.id}/subscribed_apps` 
+                    : `https://graph.facebook.com/v19.0/${p.id}/subscribed_apps`;
+                
+                await axios.post(subscribeUrl, null, {
                     params: {
                         access_token: p.access_token,
-                        subscribed_fields: 'messages,messaging_postbacks'
+                        subscribed_fields: p.platform === 'instagram' ? 'messages,comments' : 'messages,messaging_postbacks'
                     }
                 });
-                console.log(`📡 Subscribed webhook to page: ${p.name}`);
+                console.log(`📡 Subscribed webhook to ${p.platform}: ${p.name}`);
                 
                 results.push({ id: p.id, name: p.name, success: true });
             } catch (pErr) {

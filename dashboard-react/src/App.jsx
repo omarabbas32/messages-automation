@@ -303,6 +303,16 @@ function DashboardContent() {
     }
   };
 
+  const handleGetIGAuthUrl = async () => {
+    try {
+      const result = await apiFetch('/api/auth/instagram/url');
+      return result.success ? result.url : null;
+    } catch (error) {
+      console.error('Failed to get IG Auth URL:', error);
+      return null;
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-20" style={{ height: '100vh', background: 'var(--bg-secondary)' }}>
@@ -331,6 +341,7 @@ function DashboardContent() {
               onAddPage={handleAddPage}
               onBulkConnect={handleBulkConnect}
               onGetFBAuthUrl={handleGetFBAuthUrl}
+              onGetIGAuthUrl={handleGetIGAuthUrl}
               onDeletePage={handleDeletePage}
               onUpdateAI={handleUpdateAI}
               onUpdateKnowledge={handleUpdateKnowledge}

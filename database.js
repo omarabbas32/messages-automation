@@ -7,18 +7,20 @@ import bcrypt from 'bcrypt';
  * Add a new Facebook Page
  * @returns {{ success: boolean, id?: number, error?: string }}
  */
-export async function addPage(ownerId, pageId, pageToken, pageName, aiContextLimit = 5) {
+export async function addPage(ownerId, pageId, pageToken, pageName, aiContextLimit = 5, platform = 'facebook', igUserId = null) {
   try {
     const result = await query(
-      `INSERT INTO pages (owner_id, page_id, page_token, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, created_at)
-       VALUES ($1, $2, $3, $4, true, 'أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد.', '', $5, now())
+      `INSERT INTO pages (owner_id, page_id, page_token, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, platform, ig_user_id, created_at)
+       VALUES ($1, $2, $3, $4, true, 'أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد.', '', $5, $6, $7, now())
        ON CONFLICT (page_id) DO UPDATE SET 
          page_token = EXCLUDED.page_token,
          page_name = EXCLUDED.page_name,
          owner_id = EXCLUDED.owner_id,
+         platform = EXCLUDED.platform,
+         ig_user_id = EXCLUDED.ig_user_id,
          created_at = now()
        RETURNING id`,
-      [ownerId, pageId, pageToken, pageName, aiContextLimit]
+      [ownerId, pageId, pageToken, pageName, aiContextLimit, platform, igUserId]
     );
     const newPage = result.rows[0];
 
@@ -63,7 +65,7 @@ export async function getPageById(id) {
  */
 export async function getAllPages(ownerId) {
   const result = await query(
-    `SELECT id, owner_id, page_id, page_name, ai_enabled, ai_instructions, knowledge_base, created_at
+    `SELECT id, owner_id, page_id, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, platform, ig_user_id, created_at
      FROM pages
      WHERE owner_id = $1
      ORDER BY created_at DESC`,
