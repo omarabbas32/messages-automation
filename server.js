@@ -267,29 +267,69 @@ async function handleMessage(pageId, senderId, message) {
   }
 }
 
-async function sendMessage(pageToken, senderId, text, platform = 'facebook', accountId = null) {
+// ==================== DIAGNOSTICS ====================
+
+/**
+ * Diagnostic route to check permissions of a stored Page Access Token
+ */
+app.get('/api/debug/token/:pageId', async (req, res) => {
     try {
-        let url = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
-        
-        // Instagram uses a different endpoint format
-        if (platform === 'instagram' && accountId) {
-            url = `https://graph.facebook.com/v19.0/${accountId}/messages?access_token=${pageToken}`;
-        }
+        const page = await db.getPage(req.params.pageId);
+        if (!page) return res.status(404).json({ error: "Page not found in database" });
 
-        const payload = {
-            recipient: { id: senderId },
-            message: { text },
-        };
+        // Query Meta for current permissions
+        const debugRes = await axios.get(`https://graph.facebook.com/v19.0/me/permissions`, {
+            params: { access_token: page.page_token }
+        });
 
-        // Instagram often requires messaging_type: 'RESPONSE' to function correctly
-        if (platform === 'instagram') {
-            payload.messaging_type = 'RESPONSE';
-        }
+        res.json({
+            page_name: page.page_name,
+            platform: page.platform,
+            page_id: page.page_id,
+            ig_user_id: page.ig_user_id,
+            permissions: debugRes.data.data
+        });
+    } catch (error) {
+        console.error("Debug Token Error:", error.response?.data || error.message);
+        res.status(500).json({ error: error.response?.data || error.message });
+    }
+});
 
+async function sendMessage(pageToken, senderId, text, platform = 'facebook', accountId = null) {
+    let url = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
+    
+    // Instagram typically uses /{ig_account_id}/messages
+    if (platform === 'instagram' && accountId) {
+        url = `https://graph.facebook.com/v19.0/${accountId}/messages?access_token=${pageToken}`;
+    }
+
+    const payload = {
+        recipient: { id: senderId },
+        message: { text },
+    };
+
+    if (platform === 'instagram') {
+        payload.messaging_type = 'RESPONSE';
+    }
+
+    try {
         await axios.post(url, payload);
         console.log(`✉️ [${platform}] Reply sent to ${senderId}`);
     } catch (error) {
-        console.error(`❌ Error sending ${platform} message:`, error.response?.data || error.message);
+        const fbError = error.response?.data?.error;
+        console.error(`❌ Error sending ${platform} message:`, fbError || error.message);
+
+        // Fallback: If Instagram-specific endpoint fails with "No Capability", try the generic /me/messages
+        if (platform === 'instagram' && fbError?.code === 3 && url.includes(accountId)) {
+            console.log("🔄 Attempting fallback to /me/messages endpoint...");
+            try {
+                const fallbackUrl = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
+                await axios.post(fallbackUrl, payload);
+                console.log(`✉️ [instagram-fallback] Reply sent successfully!`);
+            } catch (fallbackErr) {
+                console.error("❌ Fallback also failed:", fallbackErr.response?.data || fallbackErr.message);
+            }
+        }
     }
 }
 
