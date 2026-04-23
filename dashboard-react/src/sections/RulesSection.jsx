@@ -107,7 +107,10 @@ function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, o
 
                     {/* Rules Table Area */}
                     <div className="lg:col-span-2">
-                        <RulesTable rules={rules} onDeleteRule={onDeleteRule} />
+                        <RulesTable 
+                            rules={rules.filter(r => r.page_id === selectedPageId)} 
+                            onDeleteRule={onDeleteRule} 
+                        />
                     </div>
                 </div>
             ) : (
