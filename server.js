@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import axios from "axios";
 import OpenAI from "openai";
@@ -14,10 +15,30 @@ import { getEmbedding } from './embedding_service.js';
 import multer from 'multer';
 import { processExcelInventory } from './excel_processor.js';
 
-// Setup Multer for memory storage
+// Setup Multer for memory storage (excel)
 const upload = multer({ 
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
+
+// Setup Multer for disk storage (images)
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const dir = './uploads';
+        if (!fs.existsSync(dir)){
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        cb(null, dir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const imageUpload = multer({ 
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -45,6 +66,8 @@ const __dirname = path.dirname(__filename);
 
 // Serve static files from the React app's build directory
 app.use(express.static(path.join(__dirname, 'dashboard-react/dist')));
+// Serve uploaded images statically
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "mytoken123";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -829,6 +852,19 @@ app.post('/api/search/vector', async (req, res) => {
     } catch (error) {
         console.error('Vector search error:', error);
         return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post("/api/upload", requireAuth, imageUpload.single('image'), (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: "No file uploaded" });
+        }
+        const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+        res.json({ success: true, url: fileUrl });
+    } catch (error) {
+        console.error('❌ Upload Error:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 

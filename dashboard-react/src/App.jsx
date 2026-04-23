@@ -200,23 +200,22 @@ function DashboardContent() {
     }
   };
 
-  const handleUploadInventory = async (pageId, file) => {
+  const handleUploadImage = async (file) => {
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('image', file);
 
-      const result = await apiFetch(`/api/pages/${pageId}/inventory/upload`, {
+      const result = await apiFetch('/api/upload', {
         method: 'POST',
         body: formData
       });
 
       if (result.success) {
-        window.Swal.fire('Inventory Refreshed!', result.message, 'success');
-        return true;
+        return result.url;
       }
     } catch (error) {
       window.Swal.fire('Upload Failed', error.message, 'error');
-      return false;
+      return null;
     }
   };
 
@@ -351,6 +350,7 @@ function DashboardContent() {
             onSelectPage={setSelectedPageId}
             onAddRule={handleAddRule}
             onDeleteRule={handleDeleteRule}
+            onUploadImage={handleUploadImage}
           />
         </div>
       ) : (
