@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import ModernPageCard from '../components/PageCard/ModernPageCard';
+import PageSettingsModal from '../components/Modal/PageSettingsModal';
 import { Globe, Share2, Keyboard, LayoutGrid, Plus, X, CheckSquare, Square, Search, Loader2 } from 'lucide-react';
 
 function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIGAuthUrl, onDeletePage, onUpdateAI, onUpdateKnowledge, onUpdatePage, onUploadInventory }) {
@@ -7,11 +8,18 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
     const [isOAuthLoading, setIsOAuthLoading] = useState(false);
     const [discoveredPages, setDiscoveredPages] = useState([]);
     const [selectedPageIds, setSelectedPageIds] = useState([]);
+    const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+    const [editingPage, setEditingPage] = useState(null);
     const [formData, setFormData] = useState({
         page_id: '',
         page_token: '',
         page_name: ''
     });
+
+    const handleEdit = (page) => {
+        setEditingPage(page);
+        setIsSettingsModalOpen(true);
+    };
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -250,11 +258,22 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
                             page={page}
                             onDeletePage={onDeletePage}
                             onUpdateAI={onUpdateAI}
-                            onEdit={() => {}} // We'll handle this later
+                            onEdit={handleEdit}
                         />
                     ))
                 )}
             </div>
+
+            {/* Settings Modal */}
+            <PageSettingsModal 
+                isOpen={isSettingsModalOpen}
+                onClose={() => setIsSettingsModalOpen(false)}
+                page={editingPage}
+                onUpdatePage={onUpdatePage}
+                onUpdateAI={onUpdateAI}
+                onUpdateKnowledge={onUpdateKnowledge}
+                onUploadInventory={onUploadInventory}
+            />
         </section>
     );
 }
