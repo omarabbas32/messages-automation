@@ -163,7 +163,12 @@ async function handleMessage(pageId, senderId, message) {
     for (const rule of rules) {
       if (msgLower.includes(rule.keyword.toLowerCase())) {
         console.log(`✅ Keyword matched: "${rule.keyword}"`);
-        await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId);
+        // Send image if available, else send text reply
+        if (rule.image_url) {
+            await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId, rule.image_url);
+        } else {
+            await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId);
+        }
         return;
       }
     }
@@ -295,7 +300,7 @@ app.get('/api/debug/token/:pageId', async (req, res) => {
     }
 });
 
-async function sendMessage(pageToken, senderId, text, platform = 'facebook', accountId = null) {
+async function sendMessage(pageToken, senderId, text, platform = 'facebook', accountId = null, imageUrl = null) {
     let url = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
     
     // Instagram typically uses /{ig_account_id}/messages
@@ -305,8 +310,20 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
 
     const payload = {
         recipient: { id: senderId },
-        message: { text },
+        message: {}
     };
+
+    if (imageUrl) {
+        payload.message.attachment = {
+            type: "image",
+            payload: { url: imageUrl, is_reusable: true }
+        };
+        // If there's ALSO text, we should probably send it as a separate message or just use the image
+        // Meta API usually allows either text OR attachment but not both in one 'message' object for standard replies.
+        // We'll send the image first, then the text if provided.
+    } else {
+        payload.message.text = text;
+    }
 
     if (platform === 'instagram') {
         payload.messaging_type = 'RESPONSE';
@@ -314,7 +331,18 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
 
     try {
         await axios.post(url, payload);
-        console.log(`✉️ [${platform}] Reply sent to ${senderId}`);
+        console.log(`✉️ [${platform}] ${imageUrl ? 'Image' : 'Text'} reply sent to ${senderId}`);
+        
+        // If we have an image AND text, send text as a second message
+        if (imageUrl && text && text.trim().length > 0) {
+            const textPayload = {
+                recipient: { id: senderId },
+                message: { text }
+            };
+            if (platform === 'instagram') textPayload.messaging_type = 'RESPONSE';
+            await axios.post(url, textPayload);
+            console.log(`✉️ [${platform}] Additional text reply sent to ${senderId}`);
+        }
     } catch (error) {
         const fbError = error.response?.data?.error;
         console.error(`❌ Error sending ${platform} message:`, fbError || error.message);
@@ -959,9 +987,9 @@ app.get("/api/rules", async (req, res) => {
 
 app.post("/api/rules", async (req, res) => {
     try {
-        const { page_id, keyword, reply } = req.body;
+        const { page_id, keyword, reply, image_url } = req.body;
         const owner_id = req.userId;
-        const result = await db.addRule(owner_id, page_id, keyword, reply);
+        const result = await db.addRule(owner_id, page_id, keyword, reply, image_url);
         if (result.success) res.json({ success: true, id: result.id });
         else res.status(400).json({ success: false, error: result.error });
     } catch (error) {
@@ -972,9 +1000,9 @@ app.post("/api/rules", async (req, res) => {
 app.put("/api/rules/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        const { keyword, reply } = req.body;
+        const { keyword, reply, image_url } = req.body;
         const owner_id = req.userId;
-        const success = await db.updateRule(id, owner_id, keyword, reply);
+        const success = await db.updateRule(id, owner_id, keyword, reply, image_url);
         if (success) res.json({ success: true });
         else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {

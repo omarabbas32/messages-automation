@@ -45,9 +45,19 @@ function RulesTable({ rules, onDeleteRule }) {
                                     </div>
                                 </td>
                                 <td className="px-6 py-5">
-                                    <p className="text-xs font-medium text-wink-gray-600 line-clamp-2 max-w-sm">
-                                        {rule.reply}
-                                    </p>
+                                    <div className="flex flex-col space-y-2">
+                                        <p className="text-xs font-medium text-wink-gray-600 line-clamp-2 max-w-sm">
+                                            {rule.reply}
+                                        </p>
+                                        {rule.image_url && (
+                                            <div className="flex items-center space-x-2">
+                                                <div className="w-8 h-8 rounded bg-wink-gray-100 overflow-hidden border border-wink-gray-200">
+                                                    <img src={rule.image_url} alt="Reply" className="w-full h-full object-cover" />
+                                                </div>
+                                                <span className="text-[10px] text-wink-gray-400 font-bold uppercase">Image Attached</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </td>
                                 <td className="px-6 py-5">
                                     <div className="flex items-center space-x-2 text-wink-gray-400">

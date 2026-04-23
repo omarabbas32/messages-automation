@@ -184,7 +184,7 @@ export async function updatePage(id, ownerId, pageName, pageToken) {
 /**
  * Add a new keyword rule for a page, verifying ownership via pages table
  */
-export async function addRule(ownerId, pageId, keyword, reply) {
+export async function addRule(ownerId, pageId, keyword, reply, imageUrl = null) {
   try {
     // Verify the page exists and belongs to this owner
     const pageCheck = await query(
@@ -196,8 +196,8 @@ export async function addRule(ownerId, pageId, keyword, reply) {
     }
 
     const result = await query(
-      `INSERT INTO rules (owner_id, page_id, keyword, reply) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [ownerId, pageId, keyword, reply]
+      `INSERT INTO rules (owner_id, page_id, keyword, reply, image_url) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [ownerId, pageId, keyword, reply, imageUrl]
     );
     return { success: true, id: result.rows[0].id };
   } catch (error) {
@@ -259,10 +259,10 @@ export async function deleteRule(id, ownerId) {
 /**
  * Update a rule, enforcing owner
  */
-export async function updateRule(id, ownerId, keyword, reply) {
+export async function updateRule(id, ownerId, keyword, reply, imageUrl = null) {
   const result = await query(
-    'UPDATE rules SET keyword = $1, reply = $2 WHERE id = $3 AND owner_id = $4 RETURNING id',
-    [keyword, reply, id, ownerId]
+    'UPDATE rules SET keyword = $1, reply = $2, image_url = $3 WHERE id = $4 AND owner_id = $5 RETURNING id',
+    [keyword, reply, imageUrl, id, ownerId]
   );
   return result.rowCount > 0;
 }
@@ -477,6 +477,8 @@ export async function initDatabase() {
     // Auto-apply migration 010: add platform support columns if they don't exist yet
     await query(`ALTER TABLE pages ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'facebook' CHECK (platform IN ('facebook', 'instagram'))`);
     await query(`ALTER TABLE pages ADD COLUMN IF NOT EXISTS ig_user_id TEXT`);
+    // Auto-apply migration 011: add image_url to rules
+    await query(`ALTER TABLE rules ADD COLUMN IF NOT EXISTS image_url TEXT`);
     console.log('✅ PostgreSQL database ready');
     // Clean up old conversations daily
     setInterval(cleanupConversations, 24 * 60 * 60 * 1000);

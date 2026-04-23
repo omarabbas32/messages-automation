@@ -1,18 +1,19 @@
 import { useState } from 'react';
 import RulesTable from '../components/RulesTable/RulesTable';
-import { Settings2, Plus, MessageSquare, Target, ChevronDown, Globe, Share2 } from 'lucide-react';
+import { Settings2, Plus, MessageSquare, Target, ChevronDown, Globe, Share2, Image as ImageIcon } from 'lucide-react';
 
 function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, onDeleteRule }) {
     const [formData, setFormData] = useState({
         keyword: '',
-        reply: ''
+        reply: '',
+        image_url: ''
     });
 
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!selectedPageId) return;
         onAddRule({ ...formData, page_id: selectedPageId });
-        setFormData({ keyword: '', reply: '' });
+        setFormData({ keyword: '', reply: '', image_url: '' });
     };
 
     const handleChange = (e) => {
@@ -95,6 +96,21 @@ function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, o
                                     required
                                     placeholder="Type the response here..."
                                     className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all min-h-[120px] placeholder:font-normal"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">
+                                    <ImageIcon size={12} />
+                                    <span>Image URL (Optional)</span>
+                                </div>
+                                <input
+                                    type="text"
+                                    name="image_url"
+                                    value={formData.image_url}
+                                    onChange={handleChange}
+                                    placeholder="https://example.com/image.jpg"
+                                    className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all placeholder:font-normal"
                                 />
                             </div>
 
