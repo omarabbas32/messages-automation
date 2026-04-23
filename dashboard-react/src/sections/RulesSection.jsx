@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import RulesTable from '../components/RulesTable/RulesTable';
-import { Settings2, Plus, MessageSquare, Target, ChevronDown } from 'lucide-react';
+import { Settings2, Plus, MessageSquare, Target, ChevronDown, Globe, Share2 } from 'lucide-react';
 
 function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, onDeleteRule }) {
     const [formData, setFormData] = useState({
