@@ -184,7 +184,7 @@ export async function updatePage(id, ownerId, pageName, pageToken) {
 /**
  * Add a new keyword rule for a page, verifying ownership via pages table
  */
-export async function addRule(ownerId, pageId, keyword, reply, imageUrl = null) {
+export async function addRule(ownerId, pageId, keyword, reply, imageUrls = null) {
   try {
     // Verify the page exists and belongs to this owner
     const pageCheck = await query(
@@ -195,9 +195,11 @@ export async function addRule(ownerId, pageId, keyword, reply, imageUrl = null) 
       return { success: false, error: 'Page not found or unauthorized' };
     }
 
+    // Store as JSON array string
+    const imageUrlValue = Array.isArray(imageUrls) && imageUrls.length > 0 ? JSON.stringify(imageUrls) : null;
     const result = await query(
       `INSERT INTO rules (owner_id, page_id, keyword, reply, image_url) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [ownerId, pageId, keyword, reply, imageUrl]
+      [ownerId, pageId, keyword, reply, imageUrlValue]
     );
     return { success: true, id: result.rows[0].id };
   } catch (error) {
@@ -259,10 +261,11 @@ export async function deleteRule(id, ownerId) {
 /**
  * Update a rule, enforcing owner
  */
-export async function updateRule(id, ownerId, keyword, reply, imageUrl = null) {
+export async function updateRule(id, ownerId, keyword, reply, imageUrls = null) {
+  const imageUrlValue = Array.isArray(imageUrls) && imageUrls.length > 0 ? JSON.stringify(imageUrls) : null;
   const result = await query(
     'UPDATE rules SET keyword = $1, reply = $2, image_url = $3 WHERE id = $4 AND owner_id = $5 RETURNING id',
-    [keyword, reply, imageUrl, id, ownerId]
+    [keyword, reply, imageUrlValue, id, ownerId]
   );
   return result.rowCount > 0;
 }

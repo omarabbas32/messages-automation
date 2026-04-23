@@ -186,13 +186,21 @@ async function handleMessage(pageId, senderId, message) {
     const msgLower = message.toLowerCase();
     for (const rule of rules) {
       if (msgLower.includes(rule.keyword.toLowerCase())) {
-        console.log(`✅ Keyword matched: "${rule.keyword}" | image_url: ${rule.image_url || 'none'}`);
-        // Send image if available, else send text reply
+        // Parse image_urls (JSON array or legacy single URL)
+        let imageUrls = [];
         if (rule.image_url) {
-            console.log(`🖼️ Sending image reply: ${rule.image_url}`);
-            await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId, rule.image_url);
-        } else {
+            try { imageUrls = JSON.parse(rule.image_url); } catch { imageUrls = [rule.image_url]; }
+        }
+        console.log(`✅ Keyword matched: "${rule.keyword}" | images: ${imageUrls.length}`);
+
+        // Send text reply first
+        if (rule.reply && rule.reply.trim().length > 0) {
             await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId);
+        }
+        // Then send each image as a separate message
+        for (const imgUrl of imageUrls) {
+            console.log(`🖼️ Sending image: ${imgUrl}`);
+            await sendMessage(page.page_token, senderId, null, page.platform, pageId, imgUrl);
         }
         return;
       }
@@ -345,7 +353,7 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
             type: "image",
             payload: attachmentPayload
         };
-    } else {
+    } else if (text) {
         payload.message.text = text;
     }
 
@@ -356,36 +364,9 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
     try {
         await axios.post(url, payload);
         console.log(`✉️ [${platform}] ${imageUrl ? 'Image' : 'Text'} reply sent to ${senderId}`);
-
-        // If we have an image AND text, send text as a second message
-        if (imageUrl && text && text.trim().length > 0) {
-            const textPayload = {
-                recipient: { id: senderId },
-                message: { text }
-            };
-            if (platform === 'instagram') textPayload.messaging_type = 'RESPONSE';
-            await axios.post(url, textPayload);
-            console.log(`✉️ [${platform}] Additional text reply sent to ${senderId}`);
-        }
     } catch (error) {
         const fbError = error.response?.data?.error;
         console.error(`❌ Error sending ${platform} message:`, fbError || error.message);
-
-        // If image send failed, fall back to sending just the text reply
-        if (imageUrl && text && text.trim().length > 0) {
-            console.log(`🔄 Image send failed, falling back to text-only reply...`);
-            try {
-                const textPayload = {
-                    recipient: { id: senderId },
-                    message: { text }
-                };
-                if (platform === 'instagram') textPayload.messaging_type = 'RESPONSE';
-                await axios.post(url, textPayload);
-                console.log(`✉️ [${platform}] Text-only fallback sent to ${senderId}`);
-            } catch (textErr) {
-                console.error(`❌ Text fallback also failed:`, textErr.response?.data?.error || textErr.message);
-            }
-        }
 
         // Fallback: If Instagram-specific endpoint fails with "No Capability", try the generic /me/messages
         if (platform === 'instagram' && fbError?.code === 3 && url.includes(accountId)) {
@@ -1033,7 +1014,15 @@ app.get("/api/rules", async (req, res) => {
         } else {
             rules = await db.getAllRules(req.userId);
         }
-        res.json({ success: true, data: rules });
+        // Parse image_url from JSON string or legacy single URL into array
+        const parsed = (rules || []).map(r => {
+            let image_urls = [];
+            if (r.image_url) {
+                try { image_urls = JSON.parse(r.image_url); } catch { image_urls = [r.image_url]; }
+            }
+            return { ...r, image_urls };
+        });
+        res.json({ success: true, data: parsed });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -1041,9 +1030,9 @@ app.get("/api/rules", async (req, res) => {
 
 app.post("/api/rules", async (req, res) => {
     try {
-        const { page_id, keyword, reply, image_url } = req.body;
+        const { page_id, keyword, reply, image_urls } = req.body;
         const owner_id = req.userId;
-        const result = await db.addRule(owner_id, page_id, keyword, reply, image_url);
+        const result = await db.addRule(owner_id, page_id, keyword, reply, image_urls);
         if (result.success) res.json({ success: true, id: result.id });
         else res.status(400).json({ success: false, error: result.error });
     } catch (error) {
@@ -1054,9 +1043,9 @@ app.post("/api/rules", async (req, res) => {
 app.put("/api/rules/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        const { keyword, reply, image_url } = req.body;
+        const { keyword, reply, image_urls } = req.body;
         const owner_id = req.userId;
-        const success = await db.updateRule(id, owner_id, keyword, reply, image_url);
+        const success = await db.updateRule(id, owner_id, keyword, reply, image_urls);
         if (success) res.json({ success: true });
         else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {

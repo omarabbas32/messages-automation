@@ -279,6 +279,21 @@ function DashboardContent() {
     }
   };
 
+  const handleUpdateRule = async (id, ruleData) => {
+    try {
+      const result = await apiFetch(`/api/rules/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(ruleData)
+      });
+      if (result.success) {
+        fetchInitialData();
+        window.Swal.fire('Rule Updated!', 'Changes saved.', 'success');
+      }
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+    }
+  };
+
   const handleDeleteRule = async (id) => {
     try {
       const res = await apiFetch(`/api/rules/${id}`, { method: 'DELETE' });
@@ -369,6 +384,7 @@ function DashboardContent() {
             selectedPageId={selectedPageId}
             onSelectPage={setSelectedPageId}
             onAddRule={handleAddRule}
+            onUpdateRule={handleUpdateRule}
             onDeleteRule={handleDeleteRule}
             onUploadImage={handleUploadImage}
           />
