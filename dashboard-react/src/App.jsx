@@ -200,6 +200,26 @@ function DashboardContent() {
     }
   };
 
+  const handleUploadInventory = async (pageId, file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const result = await apiFetch(`/api/pages/${pageId}/inventory/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (result.success) {
+        window.Swal.fire('Inventory Refreshed!', result.message, 'success');
+        return true;
+      }
+    } catch (error) {
+      window.Swal.fire('Upload Failed', error.message, 'error');
+      return false;
+    }
+  };
+
   const handleUploadImage = async (file) => {
     try {
       const formData = new FormData();

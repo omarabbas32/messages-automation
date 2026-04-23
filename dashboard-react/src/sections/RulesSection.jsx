@@ -2,12 +2,13 @@ import { useState } from 'react';
 import RulesTable from '../components/RulesTable/RulesTable';
 import { Settings2, Plus, MessageSquare, Target, ChevronDown, Globe, Share2, Image as ImageIcon } from 'lucide-react';
 
-function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, onDeleteRule }) {
+function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, onDeleteRule, onUploadImage }) {
     const [formData, setFormData] = useState({
         keyword: '',
         reply: '',
         image_url: ''
     });
+    const [uploading, setUploading] = useState(false);
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -102,16 +103,41 @@ function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, o
                             <div className="space-y-2">
                                 <div className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">
                                     <ImageIcon size={12} />
-                                    <span>Image URL (Optional)</span>
+                                    <span>Attach Image (Optional)</span>
                                 </div>
-                                <input
-                                    type="text"
-                                    name="image_url"
-                                    value={formData.image_url}
-                                    onChange={handleChange}
-                                    placeholder="https://example.com/image.jpg"
-                                    className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all placeholder:font-normal"
-                                />
+                                {formData.image_url ? (
+                                    <div className="relative group">
+                                        <img src={formData.image_url} alt="Preview" className="w-full h-32 object-cover rounded-lg border border-wink-gray-100" />
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData(prev => ({ ...prev, image_url: '' }))}
+                                            className="absolute top-2 right-2 bg-wink-black text-wink-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <label className={`flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-wink-gray-200 rounded-lg cursor-pointer hover:border-wink-black transition-all ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                                        <ImageIcon size={20} className="text-wink-gray-300 mb-1" />
+                                        <span className="text-xs text-wink-gray-400 font-medium">
+                                            {uploading ? 'Uploading...' : 'Click to upload'}
+                                        </span>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={async (e) => {
+                                                const file = e.target.files[0];
+                                                if (!file) return;
+                                                setUploading(true);
+                                                const url = await onUploadImage(file);
+                                                if (url) setFormData(prev => ({ ...prev, image_url: url }));
+                                                setUploading(false);
+                                                e.target.value = '';
+                                            }}
+                                        />
+                                    </label>
+                                )}
                             </div>
 
                             <button type="submit" className="w-full bg-wink-black text-wink-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-wink-gray-800 shadow-lg transition-all flex items-center justify-center space-x-2">
