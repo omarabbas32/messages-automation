@@ -32,27 +32,30 @@ function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, o
             </div>
 
             {/* Page Selector Strip */}
-            <div className="bg-wink-white border border-wink-gray-200 rounded-2xl p-2 mb-10 flex flex-wrap gap-2">
-                 <div className="flex items-center px-4 py-2 text-xs font-black uppercase tracking-widest text-wink-gray-400">
-                    Scope:
+            <div className="bg-wink-white border border-wink-gray-200 rounded-2xl p-3 mb-12 flex flex-wrap gap-2 shadow-sm mt-8">
+                 <div className="flex items-center px-4 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-wink-gray-400">
+                    Active Scope:
                  </div>
-                 {pages.length === 0 ? (
-                    <div className="px-4 py-2 text-sm text-wink-gray-300 italic">No identities connected.</div>
-                 ) : (
-                    pages.map(page => (
-                        <button
-                            key={page.page_id}
-                            onClick={() => onSelectPage(page.page_id)}
-                            className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-tighter transition-all ${
-                                selectedPageId === page.page_id 
-                                ? 'bg-wink-black text-wink-white shadow-lg' 
-                                : 'bg-wink-gray-50 text-wink-gray-500 hover:bg-wink-gray-100 hover:text-wink-black'
-                            }`}
-                        >
-                            {page.page_name}
-                        </button>
-                    ))
-                 )}
+                 <div className="flex flex-wrap gap-2">
+                    {pages.length === 0 ? (
+                        <div className="px-4 py-2 text-sm text-wink-gray-300 italic">No identities connected.</div>
+                    ) : (
+                        pages.map(page => (
+                            <button
+                                key={page.id}
+                                onClick={() => onSelectPage(page.page_id)}
+                                className={`flex items-center space-x-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-tight transition-all ${
+                                    selectedPageId === page.page_id 
+                                    ? 'bg-wink-black text-wink-white shadow-xl scale-105' 
+                                    : 'bg-wink-gray-50 text-wink-gray-400 hover:bg-wink-gray-100 hover:text-wink-black'
+                                }`}
+                            >
+                                {page.platform === 'instagram' ? <Share2 size={12} /> : <Globe size={12} />}
+                                <span>{page.page_name}</span>
+                            </button>
+                        ))
+                    )}
+                 </div>
             </div>
 
             {selectedPageId ? (

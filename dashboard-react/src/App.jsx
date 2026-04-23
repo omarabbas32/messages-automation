@@ -328,7 +328,7 @@ function DashboardContent() {
       userEmail={user.email}
     >
       {activeView === 'dashboard' ? (
-        <div className="space-y-12">
+        <div className="space-y-24">
           <DashboardOverview pages={pages} />
           
           <PagesSection 

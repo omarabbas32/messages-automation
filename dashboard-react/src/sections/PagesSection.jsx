@@ -146,7 +146,7 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
 
             {/* Discovery Modal */}
             {discoveredPages.length > 0 && (
-                <div className="fixed inset-0 bg-wink-black/40 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-wink-black/60 backdrop-blur-xl z-[9999] flex items-center justify-center p-4">
                     <div className="bg-wink-white w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden animate-pop-in border border-wink-gray-200">
                         <div className="p-6 border-b border-wink-gray-100 flex items-center justify-between">
                             <h3 className="text-xl font-black text-wink-black uppercase tracking-tight">Select Pages</h3>
@@ -170,7 +170,7 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
                                             {selectedPageIds.includes(page.id) ? <CheckSquare size={20} /> : <Square size={20} />}
                                         </div>
                                         <div>
-                                            <p className="font-bold text-wink-black">{page.name}</p>
+                                            <p className="font-bold text-wink-black" dir="auto">{page.name}</p>
                                             <p className="text-xs text-wink-gray-400 font-mono tracking-tighter uppercase">{page.platform || 'facebook'} • {page.id}</p>
                                         </div>
                                     </div>
@@ -179,13 +179,18 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
                              ))}
                         </div>
                         <div className="p-6 border-t border-wink-gray-100 flex items-center justify-between bg-wink-gray-50/50">
-                            <button onClick={() => setDiscoveredPages([])} className="text-sm font-bold text-wink-gray-500 hover:text-wink-black uppercase tracking-widest">Cancel</button>
+                            <button 
+                                onClick={() => setDiscoveredPages([])} 
+                                className="px-6 py-2 rounded-lg text-sm font-bold text-wink-gray-500 hover:bg-wink-gray-100 hover:text-wink-black uppercase tracking-widest transition-all"
+                            >
+                                Cancel
+                            </button>
                             <button 
                                 onClick={handleImportSelected}
                                 disabled={selectedPageIds.length === 0}
-                                className="bg-wink-black text-wink-white px-8 py-3 rounded-lg font-black uppercase text-sm tracking-widest hover:bg-wink-gray-800 transition-all disabled:opacity-20"
+                                className="bg-wink-black text-wink-white px-8 py-3 rounded-lg font-black uppercase text-sm tracking-widest hover:bg-wink-gray-800 transition-all disabled:opacity-20 shadow-lg"
                             >
-                                Import {selectedPageIds.length} Identity
+                                Import {selectedPageIds.length} {selectedPageIds.length === 1 ? 'Identity' : 'Identities'}
                             </button>
                         </div>
                     </div>
