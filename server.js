@@ -57,6 +57,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (ngrok/Railway/Render) for correct protocol & host
 app.use(express.json());
 app.use(cookieParser());
 
@@ -185,9 +186,10 @@ async function handleMessage(pageId, senderId, message) {
     const msgLower = message.toLowerCase();
     for (const rule of rules) {
       if (msgLower.includes(rule.keyword.toLowerCase())) {
-        console.log(`✅ Keyword matched: "${rule.keyword}"`);
+        console.log(`✅ Keyword matched: "${rule.keyword}" | image_url: ${rule.image_url || 'none'}`);
         // Send image if available, else send text reply
         if (rule.image_url) {
+            console.log(`🖼️ Sending image reply: ${rule.image_url}`);
             await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId, rule.image_url);
         } else {
             await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId);
@@ -337,13 +339,12 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
     };
 
     if (imageUrl) {
+        const attachmentPayload = { url: imageUrl };
+        if (platform !== 'instagram') attachmentPayload.is_reusable = true;
         payload.message.attachment = {
             type: "image",
-            payload: { url: imageUrl, is_reusable: true }
+            payload: attachmentPayload
         };
-        // If there's ALSO text, we should probably send it as a separate message or just use the image
-        // Meta API usually allows either text OR attachment but not both in one 'message' object for standard replies.
-        // We'll send the image first, then the text if provided.
     } else {
         payload.message.text = text;
     }
@@ -355,7 +356,7 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
     try {
         await axios.post(url, payload);
         console.log(`✉️ [${platform}] ${imageUrl ? 'Image' : 'Text'} reply sent to ${senderId}`);
-        
+
         // If we have an image AND text, send text as a second message
         if (imageUrl && text && text.trim().length > 0) {
             const textPayload = {
@@ -369,6 +370,22 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
     } catch (error) {
         const fbError = error.response?.data?.error;
         console.error(`❌ Error sending ${platform} message:`, fbError || error.message);
+
+        // If image send failed, fall back to sending just the text reply
+        if (imageUrl && text && text.trim().length > 0) {
+            console.log(`🔄 Image send failed, falling back to text-only reply...`);
+            try {
+                const textPayload = {
+                    recipient: { id: senderId },
+                    message: { text }
+                };
+                if (platform === 'instagram') textPayload.messaging_type = 'RESPONSE';
+                await axios.post(url, textPayload);
+                console.log(`✉️ [${platform}] Text-only fallback sent to ${senderId}`);
+            } catch (textErr) {
+                console.error(`❌ Text fallback also failed:`, textErr.response?.data?.error || textErr.message);
+            }
+        }
 
         // Fallback: If Instagram-specific endpoint fails with "No Capability", try the generic /me/messages
         if (platform === 'instagram' && fbError?.code === 3 && url.includes(accountId)) {
@@ -860,7 +877,8 @@ app.post("/api/upload", requireAuth, imageUpload.single('image'), (req, res) => 
         if (!req.file) {
             return res.status(400).json({ success: false, error: "No file uploaded" });
         }
-        const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+        const protocol = req.protocol === 'http' && req.get('host')?.includes('ngrok') ? 'https' : req.protocol;
+        const fileUrl = `${protocol}://${req.get('host')}/uploads/${req.file.filename}`;
         res.json({ success: true, url: fileUrl });
     } catch (error) {
         console.error('❌ Upload Error:', error);
