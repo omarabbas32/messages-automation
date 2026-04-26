@@ -3,7 +3,7 @@ import ModernPageCard from '../components/PageCard/ModernPageCard';
 import PageSettingsModal from '../components/Modal/PageSettingsModal';
 import { Globe, Share2, Keyboard, LayoutGrid, Plus, X, CheckSquare, Square, Search, Loader2 } from 'lucide-react';
 
-function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIGAuthUrl, onDeletePage, onUpdateAI, onUpdateKnowledge, onUpdatePage, onUploadInventory }) {
+function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIGAuthUrl, onDeletePage, onUpdateAI, onToggleComments, onUpdateKnowledge, onUpdatePage, onUploadInventory }) {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [isOAuthLoading, setIsOAuthLoading] = useState(false);
     const [discoveredPages, setDiscoveredPages] = useState([]);
@@ -263,6 +263,7 @@ function PagesSection({ pages, onAddPage, onBulkConnect, onGetFBAuthUrl, onGetIG
                             page={page}
                             onDeletePage={onDeletePage}
                             onUpdateAI={onUpdateAI}
+                            onToggleComments={onToggleComments}
                             onEdit={handleEdit}
                         />
                     ))

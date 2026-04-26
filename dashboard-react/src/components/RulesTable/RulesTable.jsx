@@ -1,4 +1,10 @@
-import { Trash2, Pencil, Calendar, Hash, Image as ImageIcon } from 'lucide-react';
+import { Trash2, Pencil, Calendar, Hash, Image as ImageIcon, MessageSquare, MessageCircle } from 'lucide-react';
+
+const SCOPE_BADGE = {
+    message: { label: 'DM', icon: MessageSquare, cls: 'bg-wink-gray-100 text-wink-gray-500' },
+    comment: { label: 'Comment', icon: MessageCircle, cls: 'bg-blue-50 text-blue-700' },
+    both:    { label: 'Both', icon: MessageCircle, cls: 'bg-emerald-50 text-emerald-700' }
+};
 
 function RulesTable({ rules, onDeleteRule, onEditRule, editingRuleId }) {
     const formatDate = (dateString) => {
@@ -40,11 +46,21 @@ function RulesTable({ rules, onDeleteRule, onEditRule, editingRuleId }) {
                             return (
                                 <tr key={rule.id} className={`hover:bg-wink-gray-50/50 transition-all group ${isEditing ? 'bg-blue-50/50 ring-1 ring-blue-200' : ''}`}>
                                     <td className="px-6 py-5">
-                                        <div className="flex items-center space-x-2">
+                                        <div className="flex items-center flex-wrap gap-2">
                                             <div className="w-1.5 h-1.5 rounded-full bg-wink-black animate-pulse"></div>
                                             <span className="font-bold text-wink-black uppercase text-xs tracking-tighter bg-wink-gray-100 px-2 py-0.5 rounded">
                                                 {rule.keyword}
                                             </span>
+                                            {(() => {
+                                                const badge = SCOPE_BADGE[rule.scope] || SCOPE_BADGE.message;
+                                                const Icon = badge.icon;
+                                                return (
+                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-tight ${badge.cls}`}>
+                                                        <Icon size={10} />
+                                                        {badge.label}
+                                                    </span>
+                                                );
+                                            })()}
                                         </div>
                                     </td>
                                     <td className="px-6 py-5">

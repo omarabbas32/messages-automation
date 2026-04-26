@@ -113,6 +113,23 @@ function DashboardContent() {
     } catch (error) {}
   };
 
+  // Toggle the per-page comment-to-DM feature
+  const handleToggleComments = async (id, enabled) => {
+    try {
+      const result = await apiFetch(`/api/pages/${id}/comments`, {
+        method: 'PUT',
+        body: JSON.stringify({ comments_enabled: enabled })
+      });
+      if (result.success) {
+        setPages(prev => prev.map(p => p.id === id ? { ...p, comments_enabled: enabled } : p));
+        return true;
+      }
+    } catch (error) {
+      window.Swal.fire('Error', error.message, 'error');
+      return false;
+    }
+  };
+
   // Page handlers
   const handleUpdateAI = async (id, aiData) => {
     try {
@@ -365,14 +382,15 @@ function DashboardContent() {
         <div className="space-y-24">
           <DashboardOverview pages={pages} />
           
-          <PagesSection 
-            pages={pages} 
+          <PagesSection
+            pages={pages}
             onAddPage={handleAddPage}
             onBulkConnect={handleBulkConnect}
             onGetFBAuthUrl={handleGetFBAuthUrl}
             onGetIGAuthUrl={handleGetIGAuthUrl}
             onDeletePage={handleDeletePage}
             onUpdateAI={handleUpdateAI}
+            onToggleComments={handleToggleComments}
             onUpdateKnowledge={handleUpdateKnowledge}
             onUpdatePage={handleUpdatePage}
             onUploadInventory={handleUploadInventory}

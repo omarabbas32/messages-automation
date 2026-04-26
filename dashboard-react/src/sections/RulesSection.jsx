@@ -1,37 +1,37 @@
 import { useState } from 'react';
 import RulesTable from '../components/RulesTable/RulesTable';
-import { Settings2, Plus, Save, X, MessageSquare, Target, Globe, Share2, Image as ImageIcon } from 'lucide-react';
+import { Settings2, Plus, Save, X, MessageSquare, Target, Globe, Share2, Image as ImageIcon, MessageCircle } from 'lucide-react';
 
 function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, onDeleteRule, onUpdateRule, onUploadImage }) {
     const [formData, setFormData] = useState({
         keyword: '',
         reply: '',
-        image_urls: []
+        image_urls: [],
+        scope: 'message',
+        public_reply: ''
     });
     const [editingRule, setEditingRule] = useState(null);
     const [uploading, setUploading] = useState(false);
 
     const resetForm = () => {
-        setFormData({ keyword: '', reply: '', image_urls: [] });
+        setFormData({ keyword: '', reply: '', image_urls: [], scope: 'message', public_reply: '' });
         setEditingRule(null);
     };
 
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!selectedPageId) return;
+        const payload = {
+            keyword: formData.keyword,
+            reply: formData.reply,
+            image_urls: formData.image_urls,
+            scope: formData.scope,
+            public_reply: formData.scope === 'message' ? null : (formData.public_reply || null)
+        };
         if (editingRule) {
-            onUpdateRule(editingRule.id, {
-                keyword: formData.keyword,
-                reply: formData.reply,
-                image_urls: formData.image_urls
-            });
+            onUpdateRule(editingRule.id, payload);
         } else {
-            onAddRule({
-                keyword: formData.keyword,
-                reply: formData.reply,
-                image_urls: formData.image_urls,
-                page_id: selectedPageId
-            });
+            onAddRule({ ...payload, page_id: selectedPageId });
         }
         resetForm();
     };
@@ -41,7 +41,9 @@ function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, o
         setFormData({
             keyword: rule.keyword,
             reply: rule.reply,
-            image_urls: rule.image_urls || []
+            image_urls: rule.image_urls || [],
+            scope: rule.scope || 'message',
+            public_reply: rule.public_reply || ''
         });
     };
 
@@ -158,6 +160,52 @@ function RulesSection({ pages, rules, selectedPageId, onSelectPage, onAddRule, o
                                     className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all min-h-[120px] placeholder:font-normal"
                                 />
                             </div>
+
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">
+                                    <Target size={12} />
+                                    <span>Trigger Surface</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        { value: 'message', label: 'DM' },
+                                        { value: 'comment', label: 'Comment' },
+                                        { value: 'both', label: 'Both' }
+                                    ].map(opt => (
+                                        <button
+                                            type="button"
+                                            key={opt.value}
+                                            onClick={() => setFormData(prev => ({ ...prev, scope: opt.value }))}
+                                            className={`py-2.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all border ${
+                                                formData.scope === opt.value
+                                                    ? 'bg-wink-black text-wink-white border-wink-black'
+                                                    : 'bg-wink-gray-50 text-wink-gray-400 border-wink-gray-100 hover:border-wink-black hover:text-wink-black'
+                                            }`}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-wink-gray-400 font-medium">
+                                    Comment & Both require the page's Comment-to-DM toggle to be ON.
+                                </p>
+                            </div>
+
+                            {(formData.scope === 'comment' || formData.scope === 'both') && (
+                                <div className="space-y-2">
+                                    <div className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">
+                                        <MessageCircle size={12} />
+                                        <span>Public Reply (optional)</span>
+                                    </div>
+                                    <textarea
+                                        name="public_reply"
+                                        value={formData.public_reply}
+                                        onChange={handleChange}
+                                        placeholder="e.g. بعتنالك في الخاص ✉️ — leave blank for DM only"
+                                        className="w-full bg-wink-gray-50 border border-wink-gray-100 rounded-lg p-3 text-sm font-bold focus:border-wink-black outline-none transition-all min-h-[60px] placeholder:font-normal"
+                                    />
+                                </div>
+                            )}
 
                             <div className="space-y-2">
                                 <div className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">

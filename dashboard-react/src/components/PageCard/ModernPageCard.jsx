@@ -1,8 +1,9 @@
 import React from 'react';
-import { Globe, Share2, Settings, Trash2, Zap, ZapOff, ExternalLink, RefreshCw } from 'lucide-react';
+import { Globe, Share2, Settings, Trash2, Zap, ZapOff, ExternalLink, RefreshCw, MessageCircle } from 'lucide-react';
 
-const ModernPageCard = ({ page, onUpdateAI, onDeletePage, onEdit }) => {
+const ModernPageCard = ({ page, onUpdateAI, onToggleComments, onDeletePage, onEdit }) => {
   const isInstagram = page.platform === 'instagram';
+  const commentsOn = !!page.comments_enabled;
 
   return (
     <div className="bg-wink-white group relative border border-wink-gray-200 rounded-xl overflow-hidden hover:shadow-xl hover:border-wink-black transition-all duration-300">
@@ -49,7 +50,7 @@ const ModernPageCard = ({ page, onUpdateAI, onDeletePage, onEdit }) => {
           <button
             onClick={() => onUpdateAI(page.id, { ai_enabled: !page.ai_enabled })}
             className={`flex items-center justify-center space-x-2 py-2.5 rounded-lg border transition-all ${
-              page.ai_enabled 
+              page.ai_enabled
                 ? 'border-wink-gray-200 text-wink-gray-400 hover:border-wink-black hover:text-wink-black'
                 : 'border-wink-black bg-wink-black text-wink-white hover:bg-wink-gray-800'
             }`}
@@ -60,6 +61,24 @@ const ModernPageCard = ({ page, onUpdateAI, onDeletePage, onEdit }) => {
              </span>
           </button>
         </div>
+
+        {/* Comment-to-DM toggle (off by default per page) */}
+        <button
+          onClick={() => onToggleComments && onToggleComments(page.id, !commentsOn)}
+          className={`mt-2 w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all ${
+            commentsOn
+              ? 'border-wink-black bg-wink-black/5 text-wink-black'
+              : 'border-wink-gray-200 text-wink-gray-400 hover:border-wink-black hover:text-wink-black'
+          }`}
+        >
+          <div className="flex items-center space-x-2">
+            <MessageCircle size={14} />
+            <span className="text-xs font-bold uppercase tracking-tight">Comment → DM</span>
+          </div>
+          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${commentsOn ? 'bg-wink-black text-wink-white' : 'bg-wink-gray-100 text-wink-gray-400'}`}>
+            {commentsOn ? 'On' : 'Off'}
+          </span>
+        </button>
       </div>
 
       {/* Hover Overlay Delete */}

@@ -41,19 +41,19 @@ const imageUpload = multer({
     limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 dotenv.config();
 
 // Global Crash Diagnostics
 process.on('uncaughtException', (err) => {
-    console.error('🔴 CRITICAL: Uncaught Exception:', err);
+    console.error('🔴 Uncaught Exception:', err);
+    // Process state may be corrupted — let the supervisor (Docker/PM2) restart us.
     process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('🔴 CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
-    process.exit(1);
+process.on('unhandledRejection', (reason) => {
+    // A rejected promise should not take down the webhook server.
+    // Log it and keep serving — Meta will retry to a dead server otherwise.
+    console.error('🔴 Unhandled Rejection:', reason);
 });
 
 const app = express();
@@ -113,46 +113,189 @@ app.get("/webhook", (req, res) => {
 
 /**
  * Webhook event handler (POST)
- * Receives messages from ALL connected Facebook Pages
+ * Receives messages from ALL connected Facebook Pages.
+ *
+ * Acks 200 immediately, then processes asynchronously. Meta requires <20s ack
+ * and retries on timeout — without ack-first, slow OpenAI/RAG calls cause
+ * duplicate webhook deliveries and duplicate replies to the user.
  */
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", (req, res) => {
     const body = req.body;
 
-    // DEBUG: Log every incoming request to see what Facebook/Instagram is sending
-    console.log("🔍 [DEBUG WEBHOOK] Incoming POST request:");
-    console.log(JSON.stringify(body, null, 2));
+    if (body.object !== "page" && body.object !== "instagram") {
+        return res.sendStatus(404);
+    }
 
-    if (body.object === "page" || body.object === "instagram") {
-        const isInstagram = body.object === "instagram";
-        
-        // Process each entry
-        for (const entry of body.entry) {
-            // For FB, id is the pageId. For IG, it's also the account ID.
-            const accountId = entry.id;
+    // Ack first — Meta will retry if we take >20s.
+    res.sendStatus(200);
 
-            // Process each messaging event
-            for (const event of entry.messaging || []) {
-                const senderId = event.sender.id;
-                const message = event.message?.text;
-                const isEcho = event.message?.is_echo;
+    // Process events in the background. Errors are logged but never crash the server.
+    processWebhookEvents(body).catch(err => {
+        console.error('🔴 Webhook processing error:', err);
+    });
+});
 
-                if (isEcho) {
-                    console.log(`↩️ [${isInstagram ? 'IG' : 'FB'}] Ignoring echo message from ${senderId}`);
-                    continue;
-                }
+async function processWebhookEvents(body) {
+    const isInstagram = body.object === "instagram";
 
-                if (message) {
-                    console.log(`📨 [${isInstagram ? 'IG' : 'FB'}] Message from ${senderId} to ${accountId}: "${message}"`);
+    console.log("🔍 [WEBHOOK]", JSON.stringify(body, null, 2));
+
+    for (const entry of body.entry || []) {
+        const accountId = entry.id;
+
+        for (const event of entry.messaging || []) {
+            const senderId = event.sender?.id;
+            const message = event.message?.text;
+            const isEcho = event.message?.is_echo;
+
+            if (isEcho) {
+                console.log(`↩️ [${isInstagram ? 'IG' : 'FB'}] Ignoring echo message from ${senderId}`);
+                continue;
+            }
+
+            if (senderId && message) {
+                console.log(`📨 [${isInstagram ? 'IG' : 'FB'}] Message from ${senderId} to ${accountId}: "${message}"`);
+                try {
                     await handleMessage(accountId, senderId, message);
+                } catch (err) {
+                    console.error('❌ handleMessage failed:', err);
                 }
             }
         }
 
-        res.sendStatus(200);
-    } else {
-        res.sendStatus(404);
+        for (const change of entry.changes || []) {
+            const isFbComment = !isInstagram && change.field === 'feed' && change.value?.item === 'comment';
+            const isIgComment = isInstagram && change.field === 'comments';
+            if (!isFbComment && !isIgComment) continue;
+
+            // FB sends verbs like 'add' / 'edited' / 'remove'. Only respond on add.
+            if (isFbComment && change.value.verb && change.value.verb !== 'add') continue;
+
+            try {
+                await handleCommentEvent(accountId, change.value, isInstagram);
+            } catch (err) {
+                console.error('❌ handleCommentEvent failed:', err);
+            }
+        }
     }
-});
+}
+
+/**
+ * Handle a comment on a Page post (FB) or Media (IG).
+ * Triggers only if the page has comments_enabled = true and a matching keyword rule
+ * with scope 'comment' or 'both' exists.
+ */
+async function handleCommentEvent(accountId, value, isInstagram) {
+    try {
+        // Normalize across FB and IG payload shapes
+        const commentId = isInstagram ? value.id : value.comment_id;
+        const fromId    = value.from?.id;
+        const text      = (isInstagram ? value.text : value.message) || '';
+
+        if (!commentId || !text.trim()) return;
+
+        const page = await db.getPage(accountId);
+        if (!page) {
+            console.log(`⚠️ [comment] Page ${accountId} not found in DB`);
+            return;
+        }
+
+        if (!page.comments_enabled) {
+            console.log(`🔕 [comment] Page ${page.page_name} has comments-to-DM disabled — skipping`);
+            return;
+        }
+
+        // Skip our own page's comments to avoid loops (page_id for FB, ig_user_id for IG)
+        const ownIds = [page.page_id, page.ig_user_id].filter(Boolean);
+        if (fromId && ownIds.includes(String(fromId))) {
+            console.log(`↩️ [comment] Ignoring own page's comment (${fromId})`);
+            return;
+        }
+
+        // Atomic dedup — first webhook to claim wins
+        const claimed = await db.claimCommentForReply(page.page_id, commentId);
+        if (!claimed) {
+            console.log(`⏭️ [comment] Already replied to comment ${commentId}`);
+            return;
+        }
+
+        // Match against rules with comment scope
+        const rules = await db.getRules(page.page_id);
+        const eligibleRules = rules.filter(r => r.scope === 'comment' || r.scope === 'both');
+        console.log(`📋 [comment] ${eligibleRules.length} comment-scoped rule(s) for ${page.page_name}`);
+
+        const lower = text.toLowerCase();
+        const matched = eligibleRules.find(r => lower.includes(r.keyword.toLowerCase()));
+        if (!matched) {
+            console.log(`💤 [comment] No keyword matched for "${text.slice(0, 60)}"`);
+            return;
+        }
+
+        let imageUrls = [];
+        if (matched.image_url) {
+            try { imageUrls = JSON.parse(matched.image_url); } catch { imageUrls = [matched.image_url]; }
+        }
+
+        console.log(`✅ [comment] Matched "${matched.keyword}" — DMing via comment_id ${commentId}`);
+
+        // Send the private DM (the comment_id recipient form opens the messaging window)
+        if (matched.reply && matched.reply.trim().length > 0) {
+            await sendCommentReply(page, commentId, matched.reply, null);
+        }
+        for (const imgUrl of imageUrls) {
+            await sendCommentReply(page, commentId, null, imgUrl);
+        }
+
+        // Optional public reply under the comment
+        if (matched.public_reply && matched.public_reply.trim().length > 0) {
+            try {
+                await axios.post(
+                    `https://graph.facebook.com/v19.0/${commentId}/comments`,
+                    null,
+                    { params: { access_token: page.page_token, message: matched.public_reply } }
+                );
+                console.log(`💬 [comment] Public reply posted under ${commentId}`);
+            } catch (pubErr) {
+                console.error(`❌ [comment] Public reply failed:`, pubErr.response?.data?.error || pubErr.message);
+            }
+        }
+    } catch (error) {
+        console.error('❌ Error handling comment event:', error);
+    }
+}
+
+/**
+ * Send a DM in response to a comment using `recipient.comment_id`.
+ * Works on both FB and IG; opens the 24h messaging window automatically.
+ */
+async function sendCommentReply(page, commentId, text, imageUrl = null) {
+    const targetId = page.platform === 'instagram' ? (page.ig_user_id || page.page_id) : page.page_id;
+    const url = `https://graph.facebook.com/v19.0/${targetId}/messages?access_token=${page.page_token}`;
+
+    const payload = {
+        recipient: { comment_id: commentId },
+        message: {}
+    };
+
+    if (imageUrl) {
+        const attachmentPayload = { url: imageUrl };
+        if (page.platform !== 'instagram') attachmentPayload.is_reusable = true;
+        payload.message.attachment = { type: 'image', payload: attachmentPayload };
+    } else if (text) {
+        payload.message.text = text;
+    } else {
+        return;
+    }
+
+    if (page.platform === 'instagram') payload.messaging_type = 'RESPONSE';
+
+    try {
+        await axios.post(url, payload);
+        console.log(`✉️ [${page.platform}/comment] ${imageUrl ? 'Image' : 'Text'} DM sent for comment ${commentId}`);
+    } catch (err) {
+        console.error(`❌ [${page.platform}/comment] DM failed:`, err.response?.data?.error || err.message);
+    }
+}
 
 /**
  * Handle incoming message with page-specific rules
@@ -193,11 +336,18 @@ async function handleMessage(pageId, senderId, message) {
         }
         console.log(`✅ Keyword matched: "${rule.keyword}" | images: ${imageUrls.length}`);
 
-        // Send text reply first
+        // Save inbound user message before sending replies, so concurrent
+        // messages from the same sender see full history.
+        await db.saveConversation(pageId, senderId, "user", message);
+
+        // Send text reply, only persist it if delivery succeeded
         if (rule.reply && rule.reply.trim().length > 0) {
-            await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId);
+            const ok = await sendMessage(page.page_token, senderId, rule.reply, page.platform, pageId);
+            if (ok) {
+                await db.saveConversation(pageId, senderId, "assistant", rule.reply);
+            }
         }
-        // Then send each image as a separate message
+        // Send images (not persisted to conversation history — no text content)
         for (const imgUrl of imageUrls) {
             console.log(`🖼️ Sending image: ${imgUrl}`);
             await sendMessage(page.page_token, senderId, null, page.platform, pageId, imgUrl);
@@ -213,14 +363,21 @@ async function handleMessage(pageId, senderId, message) {
       const fallback = page.ai_enabled
         ? "شكراً لرسالتك! سيتم الرد عليك قريباً."
         : "شكراً لرسالتك! سيتم الرد عليك من قبل فريق الدعم قريباً.";
-      await sendMessage(page.page_token, senderId, fallback, page.platform, pageId);
+      const ok = await sendMessage(page.page_token, senderId, fallback, page.platform, pageId);
+      if (ok) {
+          await db.saveConversation(pageId, senderId, "user", message);
+          await db.saveConversation(pageId, senderId, "assistant", fallback);
+      }
       return;
     }
 
     try {
       console.log("🧠 Using AI with RAG...");
 
-      // 4a. RAG — find top 3 most relevant knowledge chunks for this message
+      // Save user message early so concurrent messages see it in their context.
+      await db.saveConversation(pageId, senderId, "user", message);
+
+      // 4a. RAG — find top relevant knowledge chunks for this message
       let knowledgeContext = '';
       if (page.knowledge_base && page.knowledge_base.trim().length > 0) {
         try {
@@ -248,7 +405,7 @@ async function handleMessage(pageId, senderId, message) {
         }
       }
 
-      // 4b. Get conversation messages for context (limited by page settings)
+      // 4b. Get conversation messages for context (now includes the just-saved user message)
       const contextLimit = page.ai_context_limit || 5;
       const historyRes = await db.getConversation(pageId, senderId);
       const history = historyRes.slice(-contextLimit);
@@ -278,10 +435,10 @@ async function handleMessage(pageId, senderId, message) {
         `${knowledgeContext}\n\n` +
         `You must strictly follow these rules.`;
 
+      // history already contains the current user message at the tail
       const messages = [
         { role: "system", content: systemPrompt },
-        ...history,
-        { role: "user", content: message }
+        ...history
       ];
 
       // Use user-defined defaults or system fallback
@@ -296,15 +453,15 @@ async function handleMessage(pageId, senderId, message) {
       const tokensUsed = gptReply.usage?.total_tokens || 0;
       console.log(`📊 AI Usage: ${tokensUsed} tokens`);
 
-      // 4d. Save both messages in conversation history
-      await db.saveConversation(pageId, senderId, "user", message);
-      await db.saveConversation(pageId, senderId, "assistant", aiResponse);
-
-      await sendMessage(page.page_token, senderId, aiResponse, page.platform, pageId);
-      console.log("✅ AI response sent");
-
-      // 4e. Increment user usage count
-      await db.incrementUserUsage(page.owner_id, tokensUsed);
+      // Send first; only persist + bill if delivery succeeded.
+      const sent = await sendMessage(page.page_token, senderId, aiResponse, page.platform, pageId);
+      if (sent) {
+          await db.saveConversation(pageId, senderId, "assistant", aiResponse);
+          await db.incrementUserUsage(page.owner_id, tokensUsed);
+          console.log("✅ AI response sent");
+      } else {
+          console.warn('⚠️ AI reply not delivered — assistant turn not persisted, usage not billed');
+      }
 
     } catch (error) {
       console.error("❌ OpenAI error:", error.message);
@@ -348,9 +505,13 @@ app.get('/api/debug/token/:pageId', async (req, res) => {
     }
 });
 
+/**
+ * Send a message via Graph API. Returns true on success, false on failure.
+ * Callers should gate state updates (saveConversation, incrementUsage) on this return value.
+ */
 async function sendMessage(pageToken, senderId, text, platform = 'facebook', accountId = null, imageUrl = null) {
     let url = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
-    
+
     // Instagram typically uses /{ig_account_id}/messages
     if (platform === 'instagram' && accountId) {
         url = `https://graph.facebook.com/v19.0/${accountId}/messages?access_token=${pageToken}`;
@@ -370,6 +531,8 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
         };
     } else if (text) {
         payload.message.text = text;
+    } else {
+        return false;
     }
 
     if (platform === 'instagram') {
@@ -379,6 +542,7 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
     try {
         await axios.post(url, payload);
         console.log(`✉️ [${platform}] ${imageUrl ? 'Image' : 'Text'} reply sent to ${senderId}`);
+        return true;
     } catch (error) {
         const fbError = error.response?.data?.error;
         console.error(`❌ Error sending ${platform} message:`, fbError || error.message);
@@ -390,10 +554,12 @@ async function sendMessage(pageToken, senderId, text, platform = 'facebook', acc
                 const fallbackUrl = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
                 await axios.post(fallbackUrl, payload);
                 console.log(`✉️ [instagram-fallback] Reply sent successfully!`);
+                return true;
             } catch (fallbackErr) {
                 console.error("❌ Fallback also failed:", fallbackErr.response?.data || fallbackErr.message);
             }
         }
+        return false;
     }
 }
 
@@ -467,13 +633,16 @@ app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
         console.log(`🔑 Login attempt for: ${email}`);
-        
+
         const user = await db.getUserByEmail(email);
-        
+
         if (!user || !(await bcrypt.compare(password, user.password_hash))) {
             console.log(`❌ Login failed for: ${email}`);
             return res.status(401).json({ success: false, error: 'Invalid email or password' });
         }
+
+        // Sweep expired refresh tokens for this user so the table doesn't grow unbounded.
+        await db.cleanupExpiredRefreshTokens(user.id);
 
         const accessToken = generateAccessToken(user);
         const refreshToken = generateRefreshToken(user);
@@ -525,7 +694,9 @@ app.post('/api/auth/refresh', async (req, res) => {
             maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000
         });
 
-        res.json({ success: true, accessToken: newAccessToken, user });
+        // Mask the OpenAI key before sending the user object back to the client.
+        const safeUser = { ...user, openai_api_key: maskApiKey(user.openai_api_key) };
+        res.json({ success: true, accessToken: newAccessToken, user: safeUser });
     } catch (error) {
         res.status(401).json({ success: false, error: 'Session expired' });
     }
@@ -838,7 +1009,7 @@ app.post("/api/pages/bulk", requireAuth, async (req, res) => {
                 await axios.post(subscribeUrl, null, {
                     params: {
                         access_token: p.access_token,
-                        subscribed_fields: p.platform === 'instagram' ? 'messages,comments' : 'messages,messaging_postbacks'
+                        subscribed_fields: p.platform === 'instagram' ? 'messages,comments' : 'messages,messaging_postbacks,feed'
                     }
                 });
                 console.log(`📡 Subscribed webhook to ${p.platform}: ${p.name}`);
@@ -1030,6 +1201,22 @@ app.put("/api/pages/:id/ai", async (req, res) => {
     }
 });
 
+app.put("/api/pages/:id/comments", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { comments_enabled } = req.body;
+        const owner_id = req.userId;
+        if (typeof comments_enabled !== 'boolean') {
+            return res.status(400).json({ success: false, error: 'comments_enabled must be boolean' });
+        }
+        const success = await db.updatePageCommentsEnabled(id, owner_id, comments_enabled);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.put("/api/pages/:id/knowledge", async (req, res) => {
     try {
         const { id } = req.params;
@@ -1068,9 +1255,9 @@ app.get("/api/rules", async (req, res) => {
 
 app.post("/api/rules", async (req, res) => {
     try {
-        const { page_id, keyword, reply, image_urls } = req.body;
+        const { page_id, keyword, reply, image_urls, scope, public_reply } = req.body;
         const owner_id = req.userId;
-        const result = await db.addRule(owner_id, page_id, keyword, reply, image_urls);
+        const result = await db.addRule(owner_id, page_id, keyword, reply, image_urls, scope, public_reply);
         if (result.success) res.json({ success: true, id: result.id });
         else res.status(400).json({ success: false, error: result.error });
     } catch (error) {
@@ -1081,9 +1268,9 @@ app.post("/api/rules", async (req, res) => {
 app.put("/api/rules/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        const { keyword, reply, image_urls } = req.body;
+        const { keyword, reply, image_urls, scope, public_reply } = req.body;
         const owner_id = req.userId;
-        const success = await db.updateRule(id, owner_id, keyword, reply, image_urls);
+        const success = await db.updateRule(id, owner_id, keyword, reply, image_urls, scope, public_reply);
         if (success) res.json({ success: true });
         else res.status(404).json({ success: false, error: 'Not found' });
     } catch (error) {
@@ -1103,12 +1290,27 @@ app.delete("/api/rules/:id", async (req, res) => {
     }
 });
 
+function maskApiKey(key) {
+    if (!key) return null;
+    if (key.length < 12) return '***';
+    return `${key.slice(0, 7)}...${key.slice(-4)}`;
+}
+
 app.get("/api/user/settings", async (req, res) => {
     try {
         const settings = await db.getUserSettings(req.userId);
         if (!settings) return res.status(404).json({ success: false, error: 'Not found' });
         const isUsingSystemKey = !settings.openai_api_key;
-        res.json({ success: true, data: { ...settings, is_using_system_key: isUsingSystemKey } });
+        // Never return the full key to the client; PATCH detects the mask via '...'
+        // and skips the field, so the existing key isn't overwritten on save.
+        res.json({
+            success: true,
+            data: {
+                ...settings,
+                openai_api_key: maskApiKey(settings.openai_api_key),
+                is_using_system_key: isUsingSystemKey
+            }
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -1182,8 +1384,13 @@ app.use((req, res) => {
  */
 app.listen(PORT, async () => {
   console.log(`\n🎉 SaaS Gateway running on port ${PORT}`);
-  console.log(`🔗 Webhook: ${process.env.FB_REDIRECT_URI.replace('/api/auth/facebook/callback', '')}/webhook`);
-  
+  const baseUrl = process.env.FB_REDIRECT_URI?.replace('/api/auth/facebook/callback', '');
+  if (baseUrl) {
+    console.log(`🔗 Webhook: ${baseUrl}/webhook`);
+  } else {
+    console.warn('⚠️ FB_REDIRECT_URI is not set — webhook URL not displayed.');
+  }
+
   try {
     await db.initDatabase();
     await initPgVector();

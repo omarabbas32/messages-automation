@@ -9,16 +9,27 @@ import bcrypt from 'bcrypt';
  */
 export async function addPage(ownerId, pageId, pageToken, pageName, aiContextLimit = 5, platform = 'facebook', igUserId = null) {
   try {
+    // Block ownership transfer: if this page is already connected by a different owner,
+    // reject the call instead of silently overwriting their rules/conversations/knowledge base.
+    const existing = await query(
+      'SELECT owner_id FROM pages WHERE page_id = $1',
+      [pageId]
+    );
+    if (existing.rows.length > 0 && existing.rows[0].owner_id !== ownerId) {
+      return {
+        success: false,
+        error: 'This page is already connected by another account. Disconnect it from that account first.'
+      };
+    }
+
     const result = await query(
       `INSERT INTO pages (owner_id, page_id, page_token, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, platform, ig_user_id, created_at)
        VALUES ($1, $2, $3, $4, true, 'أنت مساعد خدمة عملاء محترف. قم بالرد على الرسائل بشكل مهذب ومفيد.', '', $5, $6, $7, now())
-       ON CONFLICT (page_id) DO UPDATE SET 
+       ON CONFLICT (page_id) DO UPDATE SET
          page_token = EXCLUDED.page_token,
          page_name = EXCLUDED.page_name,
-         owner_id = EXCLUDED.owner_id,
          platform = EXCLUDED.platform,
-         ig_user_id = EXCLUDED.ig_user_id,
-         created_at = now()
+         ig_user_id = EXCLUDED.ig_user_id
        RETURNING id`,
       [ownerId, pageId, pageToken, pageName, aiContextLimit, platform, igUserId]
     );
@@ -65,13 +76,24 @@ export async function getPageById(id) {
  */
 export async function getAllPages(ownerId) {
   const result = await query(
-    `SELECT id, owner_id, page_id, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, platform, ig_user_id, created_at
+    `SELECT id, owner_id, page_id, page_name, ai_enabled, ai_instructions, knowledge_base, ai_context_limit, platform, ig_user_id, comments_enabled, created_at
      FROM pages
      WHERE owner_id = $1
      ORDER BY created_at DESC`,
     [ownerId]
   );
   return result.rows;
+}
+
+/**
+ * Toggle the per-page comments-to-DM feature, enforcing owner.
+ */
+export async function updatePageCommentsEnabled(id, ownerId, enabled) {
+  const result = await query(
+    'UPDATE pages SET comments_enabled = $1 WHERE id = $2 AND owner_id = $3 RETURNING page_id',
+    [!!enabled, id, ownerId]
+  );
+  return result.rowCount > 0;
 }
 
 /**
@@ -184,7 +206,7 @@ export async function updatePage(id, ownerId, pageName, pageToken) {
 /**
  * Add a new keyword rule for a page, verifying ownership via pages table
  */
-export async function addRule(ownerId, pageId, keyword, reply, imageUrls = null) {
+export async function addRule(ownerId, pageId, keyword, reply, imageUrls = null, scope = 'message', publicReply = null) {
   try {
     // Verify the page exists and belongs to this owner
     const pageCheck = await query(
@@ -195,11 +217,13 @@ export async function addRule(ownerId, pageId, keyword, reply, imageUrls = null)
       return { success: false, error: 'Page not found or unauthorized' };
     }
 
-    // Store as JSON array string
     const imageUrlValue = Array.isArray(imageUrls) && imageUrls.length > 0 ? JSON.stringify(imageUrls) : null;
+    const safeScope = ['message', 'comment', 'both'].includes(scope) ? scope : 'message';
+    const safePublicReply = publicReply && publicReply.trim().length > 0 ? publicReply.trim() : null;
     const result = await query(
-      `INSERT INTO rules (owner_id, page_id, keyword, reply, image_url) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [ownerId, pageId, keyword, reply, imageUrlValue]
+      `INSERT INTO rules (owner_id, page_id, keyword, reply, image_url, scope, public_reply)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [ownerId, pageId, keyword, reply, imageUrlValue, safeScope, safePublicReply]
     );
     return { success: true, id: result.rows[0].id };
   } catch (error) {
@@ -261,11 +285,31 @@ export async function deleteRule(id, ownerId) {
 /**
  * Update a rule, enforcing owner
  */
-export async function updateRule(id, ownerId, keyword, reply, imageUrls = null) {
+export async function updateRule(id, ownerId, keyword, reply, imageUrls = null, scope = 'message', publicReply = null) {
   const imageUrlValue = Array.isArray(imageUrls) && imageUrls.length > 0 ? JSON.stringify(imageUrls) : null;
+  const safeScope = ['message', 'comment', 'both'].includes(scope) ? scope : 'message';
+  const safePublicReply = publicReply && publicReply.trim().length > 0 ? publicReply.trim() : null;
   const result = await query(
-    'UPDATE rules SET keyword = $1, reply = $2, image_url = $3 WHERE id = $4 AND owner_id = $5 RETURNING id',
-    [keyword, reply, imageUrlValue, id, ownerId]
+    `UPDATE rules
+       SET keyword = $1, reply = $2, image_url = $3, scope = $4, public_reply = $5
+     WHERE id = $6 AND owner_id = $7
+     RETURNING id`,
+    [keyword, reply, imageUrlValue, safeScope, safePublicReply, id, ownerId]
+  );
+  return result.rowCount > 0;
+}
+
+/**
+ * Atomically claim a comment for response — returns true if this is the first time
+ * we've seen this (page_id, comment_id), false if already replied.
+ */
+export async function claimCommentForReply(pageId, commentId) {
+  const result = await query(
+    `INSERT INTO replied_comments (page_id, comment_id)
+     VALUES ($1, $2)
+     ON CONFLICT (page_id, comment_id) DO NOTHING
+     RETURNING comment_id`,
+    [pageId, commentId]
   );
   return result.rowCount > 0;
 }
@@ -473,22 +517,51 @@ export async function revokeAllRefreshTokens(userId) {
   await query('DELETE FROM refresh_tokens WHERE user_id = $1', [userId]);
 }
 
+/**
+ * Sweep expired refresh tokens for a user. Called on login to prevent the
+ * refresh_tokens table from accumulating stale rows indefinitely.
+ */
+export async function cleanupExpiredRefreshTokens(userId) {
+  await query('DELETE FROM refresh_tokens WHERE user_id = $1 AND expires_at < now()', [userId]);
+}
+
 // ==================== INITIALIZATION ====================
 
+let _initialized = false;
+let _cleanupInterval = null;
+
 export async function initDatabase() {
+  // Idempotent — safe to call multiple times. server.js calls it on listen,
+  // and historically database.js auto-ran it on import. Guard to avoid
+  // duplicate setInterval handlers leaking between calls.
+  if (_initialized) return;
+
   try {
     // Auto-apply migration 010: add platform support columns if they don't exist yet
     await query(`ALTER TABLE pages ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'facebook' CHECK (platform IN ('facebook', 'instagram'))`);
     await query(`ALTER TABLE pages ADD COLUMN IF NOT EXISTS ig_user_id TEXT`);
     // Auto-apply migration 011: add image_url to rules
     await query(`ALTER TABLE rules ADD COLUMN IF NOT EXISTS image_url TEXT`);
+    // Auto-apply migration 012: comment-to-DM support
+    await query(`ALTER TABLE pages ADD COLUMN IF NOT EXISTS comments_enabled BOOLEAN DEFAULT false`);
+    await query(`ALTER TABLE rules ADD COLUMN IF NOT EXISTS scope TEXT DEFAULT 'message' CHECK (scope IN ('message','comment','both'))`);
+    await query(`ALTER TABLE rules ADD COLUMN IF NOT EXISTS public_reply TEXT`);
+    await query(`CREATE TABLE IF NOT EXISTS replied_comments (
+      page_id    TEXT NOT NULL,
+      comment_id TEXT NOT NULL,
+      replied_at TIMESTAMPTZ DEFAULT now(),
+      PRIMARY KEY (page_id, comment_id)
+    )`);
     console.log('✅ PostgreSQL database ready');
-    // Clean up old conversations daily
-    setInterval(cleanupConversations, 24 * 60 * 60 * 1000);
+
+    // Clean up old conversations daily — only schedule once.
+    if (!_cleanupInterval) {
+      _cleanupInterval = setInterval(cleanupConversations, 24 * 60 * 60 * 1000);
+    }
+
+    _initialized = true;
   } catch (error) {
     console.error('❌ Error initializing database:', error);
+    // Leave _initialized = false so a later retry can succeed.
   }
 }
-
-// Auto-initialize on module import
-initDatabase();
