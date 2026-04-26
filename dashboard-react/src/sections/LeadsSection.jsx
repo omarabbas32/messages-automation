@@ -178,6 +178,7 @@ function LeadsSection({ pages, apiFetch, getToken }) {
                                 <tr className="bg-wink-gray-50 border-b border-wink-gray-100">
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">Page</th>
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">Contact</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">Context</th>
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">Status</th>
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-wink-gray-400">Captured</th>
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-wink-gray-400 text-right">Actions</th>
@@ -214,6 +215,13 @@ function LeadsSection({ pages, apiFetch, getToken }) {
                                                         </a>
                                                     )}
                                                     <span className="text-[10px] text-wink-gray-300 font-mono uppercase">PSID {lead.sender_id}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-5">
+                                                <div className="max-w-xs">
+                                                    <p className="text-xs text-wink-gray-500 line-clamp-2 italic" dir="auto">
+                                                        {lead.notes || 'No context captured'}
+                                                    </p>
                                                 </div>
                                             </td>
                                             <td className="px-6 py-5">

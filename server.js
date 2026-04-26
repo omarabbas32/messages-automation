@@ -617,6 +617,26 @@ async function transcribeAudio(audioUrl, apiKey = null) {
     }
 }
 
+/**
+ * Fetch customer profile (name) from Meta Graph API.
+ */
+async function getUserProfile(pageToken, userId, platform = 'facebook') {
+    try {
+        const fields = platform === 'instagram' ? 'name,username' : 'first_name,last_name';
+        const url = `https://graph.facebook.com/v19.0/${userId}?fields=${fields}&access_token=${pageToken}`;
+        const res = await axios.get(url);
+        
+        if (platform === 'instagram') {
+            return { name: res.data.name || res.data.username };
+        } else {
+            return { name: `${res.data.first_name || ''} ${res.data.last_name || ''}`.trim() };
+        }
+    } catch (err) {
+        // Swallowing error — if profile fetch fails, lead is still saved with just ID/phone
+        return null;
+    }
+}
+
 // ==================== LEAD EXTRACTION ====================
 
 // Egypt-friendly phone regex: matches international (+20...) and local (010..., 011..., 012..., 015...).
@@ -640,6 +660,13 @@ async function captureLeadFromMessage(page, senderId, message) {
     const info = extractLeadInfo(message);
     if (!info) return;
     try {
+        // Try to get real name from Meta
+        const profile = await getUserProfile(page.page_token, senderId, page.platform);
+        if (profile?.name) info.name = profile.name;
+
+        // Store what they were talking about as a note
+        info.notes = `Captured from: "${message}"`;
+
         const id = await db.upsertLead(page.owner_id, page.page_id, senderId, info);
         console.log(`📇 Lead captured for ${page.page_name}: ${JSON.stringify(info)} → id=${id}`);
     } catch (err) {
