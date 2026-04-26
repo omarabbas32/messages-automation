@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Settings, LogOut, Menu, X, MessageSquare, Zap } from 'lucide-react';
+import { Home, Settings, LogOut, Menu, X, MessageSquare, Zap, Users } from 'lucide-react';
 
 const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
   <button
@@ -18,6 +18,7 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
 const Sidebar = ({ activeView, onNavigate, onLogout, userEmail, isOpen, setIsOpen }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
+    { id: 'leads', label: 'Leads', icon: Users },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 

@@ -145,12 +145,36 @@ async function processWebhookEvents(body) {
 
         for (const event of entry.messaging || []) {
             const senderId = event.sender?.id;
-            const message = event.message?.text;
             const isEcho = event.message?.is_echo;
+            let message = event.message?.text;
+            const attachments = event.message?.attachments || [];
 
             if (isEcho) {
                 console.log(`↩️ [${isInstagram ? 'IG' : 'FB'}] Ignoring echo message from ${senderId}`);
                 continue;
+            }
+
+            // Voice note → transcribe via Whisper, then process as if it were text.
+            if (!message && senderId && attachments.length > 0) {
+                const audio = attachments.find(a => a.type === 'audio' && a.payload?.url);
+                if (audio) {
+                    console.log(`🎙️ [${isInstagram ? 'IG' : 'FB'}] Voice note from ${senderId} to ${accountId} — transcribing...`);
+                    try {
+                        const page = await db.getPage(accountId);
+                        if (page) {
+                            const owner = await db.getUserSettings(page.owner_id);
+                            const transcribed = await transcribeAudio(audio.payload.url, owner?.openai_api_key);
+                            if (transcribed) {
+                                console.log(`🎙️ Transcribed: "${transcribed}"`);
+                                message = transcribed;
+                            } else {
+                                console.warn('🎙️ Transcription returned empty — skipping');
+                            }
+                        }
+                    } catch (err) {
+                        console.error('❌ Voice transcription error:', err);
+                    }
+                }
             }
 
             if (senderId && message) {
@@ -311,10 +335,43 @@ async function handleMessage(pageId, senderId, message) {
 
     console.log(`📄 Processing message for: ${page.page_name}`);
 
+    const msgLower = message.toLowerCase();
+
+    // Capture phone/email from any inbound message (regex-only, no LLM cost)
+    captureLeadFromMessage(page, senderId, message);
+
+    // Resume command — overrides paused state
+    if (matchesAny(msgLower, RESUME_BOT_TRIGGERS)) {
+      await db.resumeConversation(pageId, senderId);
+      await db.saveConversation(pageId, senderId, 'user', message);
+      const resumeMsg = "تم تفعيل الرد الآلي مرة أخرى. كيف يمكنني مساعدتك؟";
+      const ok = await sendMessage(page.page_token, senderId, resumeMsg, page.platform, pageId);
+      if (ok) await db.saveConversation(pageId, senderId, 'assistant', resumeMsg);
+      return;
+    }
+
+    // Stop-bot command — pause AI for 24h, alert customer that a human will follow up
+    if (matchesAny(msgLower, STOP_BOT_TRIGGERS)) {
+      await db.pauseConversation(pageId, senderId, 24, 'user_requested');
+      await db.saveConversation(pageId, senderId, 'user', message);
+      const ack = "تم إيقاف الرد الآلي. سيتواصل معك أحد ممثلي خدمة العملاء قريباً.";
+      const ok = await sendMessage(page.page_token, senderId, ack, page.platform, pageId);
+      if (ok) await db.saveConversation(pageId, senderId, 'assistant', ack);
+      console.log(`⏸️ AI paused for ${senderId} on ${page.page_name} (24h)`);
+      return;
+    }
+
+    // Skip AI entirely if this conversation has been escalated to a human
+    if (await db.isConversationPaused(pageId, senderId)) {
+      console.log(`⏸️ Conversation paused — saving message but not replying`);
+      await db.saveConversation(pageId, senderId, 'user', message);
+      return;
+    }
+
     // 2. Fetch owner's API key if available
     const ownerSettings = await db.getUserSettings(page.owner_id);
     const userApiKey = ownerSettings?.openai_api_key;
-    
+
     // Create a local OpenAI client if user has their own key
     let activeOpenai = openai;
     if (userApiKey) {
@@ -326,7 +383,6 @@ async function handleMessage(pageId, senderId, message) {
     const rules = await db.getRules(pageId);
     console.log(`📋 Found ${rules.length} rules for this page`);
 
-    const msgLower = message.toLowerCase();
     for (const rule of rules) {
       if (msgLower.includes(rule.keyword.toLowerCase())) {
         // Parse image_urls (JSON array or legacy single URL)
@@ -373,6 +429,11 @@ async function handleMessage(pageId, senderId, message) {
 
     try {
       console.log("🧠 Using AI with RAG...");
+
+      // UX: show "seen" + typing indicator so the user knows the bot is thinking.
+      // Best-effort, non-blocking on errors.
+      sendSenderAction(page.page_token, senderId, 'mark_seen', page.platform, pageId);
+      sendSenderAction(page.page_token, senderId, 'typing_on', page.platform, pageId);
 
       // Save user message early so concurrent messages see it in their context.
       await db.saveConversation(pageId, senderId, "user", message);
@@ -504,6 +565,96 @@ app.get('/api/debug/token/:pageId', async (req, res) => {
         res.status(500).json({ error: error.response?.data || error.message });
     }
 });
+
+/**
+ * Send a typing/seen indicator. Best-effort — failures are swallowed because
+ * a missing typing indicator must never block the actual reply.
+ *   action: 'mark_seen' | 'typing_on' | 'typing_off'
+ */
+async function sendSenderAction(pageToken, senderId, action, platform = 'facebook', accountId = null) {
+    let url = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
+    if (platform === 'instagram' && accountId) {
+        url = `https://graph.facebook.com/v19.0/${accountId}/messages?access_token=${pageToken}`;
+    }
+    try {
+        await axios.post(url, {
+            recipient: { id: senderId },
+            sender_action: action
+        });
+    } catch (err) {
+        // Non-critical — IG silently rejects mark_seen, FB sometimes 400s on stale convos.
+        // Don't log loudly; just continue.
+    }
+}
+
+/**
+ * Download an audio attachment and transcribe via Whisper.
+ * Returns the transcribed text, or null on failure.
+ */
+async function transcribeAudio(audioUrl, apiKey = null) {
+    try {
+        const audioRes = await axios.get(audioUrl, {
+            responseType: 'arraybuffer',
+            timeout: 30000
+        });
+        const buffer = Buffer.from(audioRes.data);
+
+        const client = apiKey ? new OpenAI({ apiKey }) : openai;
+        if (!client) {
+            console.warn('🎙️ Cannot transcribe — no OpenAI key configured');
+            return null;
+        }
+
+        const file = await OpenAI.toFile(buffer, 'voice.mp4');
+        const result = await client.audio.transcriptions.create({
+            model: 'whisper-1',
+            file
+        });
+        return (result.text || '').trim() || null;
+    } catch (err) {
+        console.error('❌ Whisper transcription failed:', err.response?.data || err.message);
+        return null;
+    }
+}
+
+// ==================== LEAD EXTRACTION ====================
+
+// Egypt-friendly phone regex: matches international (+20...) and local (010..., 011..., 012..., 015...).
+// Accepts spaces, dashes, dots, and parens between digits — strips them on save.
+const PHONE_RX = /(?:\+?\d[\d\s\-().]{8,18}\d)/;
+const EMAIL_RX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+
+function extractLeadInfo(text) {
+    if (!text || typeof text !== 'string') return null;
+    const phoneMatch = text.match(PHONE_RX);
+    const emailMatch = text.match(EMAIL_RX);
+    if (!phoneMatch && !emailMatch) return null;
+
+    return {
+        phone: phoneMatch ? phoneMatch[0].replace(/[\s\-().]/g, '') : null,
+        email: emailMatch ? emailMatch[0].toLowerCase() : null
+    };
+}
+
+async function captureLeadFromMessage(page, senderId, message) {
+    const info = extractLeadInfo(message);
+    if (!info) return;
+    try {
+        const id = await db.upsertLead(page.owner_id, page.page_id, senderId, info);
+        console.log(`📇 Lead captured for ${page.page_name}: ${JSON.stringify(info)} → id=${id}`);
+    } catch (err) {
+        console.error('❌ Lead capture failed:', err.message);
+    }
+}
+
+// ==================== STOP-BOT COMMANDS ====================
+
+const STOP_BOT_TRIGGERS = ['/agent', '/stop', '/human', 'كلم بشري', 'ممثل خدمة عملاء', 'عايز اكلم حد'];
+const RESUME_BOT_TRIGGERS = ['/bot', '/resume', 'شغل البوت', 'رجع البوت'];
+
+function matchesAny(haystackLower, needles) {
+    return needles.some(n => haystackLower.includes(n.toLowerCase()));
+}
 
 /**
  * Send a message via Graph API. Returns true on success, false on failure.
@@ -1285,6 +1436,65 @@ app.delete("/api/rules/:id", async (req, res) => {
         const success = await db.deleteRule(id, owner_id);
         if (success) res.json({ success: true });
         else res.status(404).json({ success: false, error: 'Not found' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ==================== LEADS ====================
+
+app.get("/api/leads", async (req, res) => {
+    try {
+        const { page_id, status } = req.query;
+        const leads = await db.getLeads(req.userId, { pageId: page_id || null, status: status || null });
+        res.json({ success: true, data: leads });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.patch("/api/leads/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const success = await db.updateLead(id, req.userId, req.body || {});
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete("/api/leads/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const success = await db.deleteLead(id, req.userId);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Not found' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// CSV export — owner can download all their leads (optionally filtered to one page).
+app.get("/api/leads/export.csv", async (req, res) => {
+    try {
+        const { page_id } = req.query;
+        const leads = await db.getLeads(req.userId, { pageId: page_id || null, limit: 10000 });
+
+        // Quote CSV fields safely — wrap in "" and double any embedded ".
+        const q = (v) => {
+            if (v === null || v === undefined) return '';
+            const s = String(v).replace(/"/g, '""');
+            return `"${s}"`;
+        };
+
+        const header = ['id', 'page_name', 'sender_id', 'name', 'phone', 'email', 'status', 'notes', 'created_at', 'updated_at'];
+        const rows = leads.map(l => header.map(k => q(l[k])).join(','));
+        const csv = '﻿' + header.join(',') + '\n' + rows.join('\n'); // BOM for Excel UTF-8
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="leads-${Date.now()}.csv"`);
+        res.send(csv);
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

@@ -3,6 +3,7 @@ import MainLayout from './layouts/MainLayout';
 import DashboardOverview from './components/Dashboard/DashboardOverview';
 import PagesSection from './sections/PagesSection';
 import RulesSection from './sections/RulesSection';
+import LeadsSection from './sections/LeadsSection';
 import SettingsPage from './components/SettingsPage/SettingsPage';
 import LoginPage from './sections/Auth/LoginPage';
 import RegisterPage from './sections/Auth/RegisterPage';
@@ -37,7 +38,7 @@ function DashboardContent() {
   const [pages, setPages] = useState([]);
   const [allRules, setAllRules] = useState([]);
   const [selectedPageId, setSelectedPageId] = useState(null);
-  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' or 'settings'
+  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'leads', or 'settings'
   const [userSettings, setUserSettings] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -378,7 +379,7 @@ function DashboardContent() {
       onLogout={logout}
       userEmail={user.email}
     >
-      {activeView === 'dashboard' ? (
+      {activeView === 'dashboard' && (
         <div className="space-y-24">
           <DashboardOverview pages={pages} />
           
@@ -407,7 +408,17 @@ function DashboardContent() {
             onUploadImage={handleUploadImage}
           />
         </div>
-      ) : (
+      )}
+
+      {activeView === 'leads' && (
+        <LeadsSection 
+          pages={pages} 
+          apiFetch={apiFetch} 
+          getToken={getToken} 
+        />
+      )}
+
+      {activeView === 'settings' && (
         <SettingsPage 
           settings={userSettings} 
           onUpdateSettings={handleUpdateSettings}

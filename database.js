@@ -299,6 +299,114 @@ export async function updateRule(id, ownerId, keyword, reply, imageUrls = null, 
   return result.rowCount > 0;
 }
 
+// ==================== CONVERSATION PAUSES (human takeover) ====================
+
+/**
+ * Pause AI replies for a specific conversation for N hours.
+ * After the duration, AI takes over again automatically.
+ */
+export async function pauseConversation(pageId, senderId, hours = 24, reason = 'user_requested') {
+  await query(
+    `INSERT INTO conversation_pauses (page_id, sender_id, paused_until, reason)
+     VALUES ($1, $2, now() + ($3 || ' hours')::interval, $4)
+     ON CONFLICT (page_id, sender_id) DO UPDATE
+       SET paused_until = EXCLUDED.paused_until,
+           reason       = EXCLUDED.reason,
+           created_at   = now()`,
+    [pageId, senderId, String(hours), reason]
+  );
+}
+
+/**
+ * Returns true if AI is currently paused for this (page, sender) pair.
+ * Expired pauses are silently cleaned up.
+ */
+export async function isConversationPaused(pageId, senderId) {
+  const result = await query(
+    `SELECT paused_until FROM conversation_pauses
+     WHERE page_id = $1 AND sender_id = $2 AND paused_until > now()`,
+    [pageId, senderId]
+  );
+  return result.rowCount > 0;
+}
+
+export async function resumeConversation(pageId, senderId) {
+  await query(
+    'DELETE FROM conversation_pauses WHERE page_id = $1 AND sender_id = $2',
+    [pageId, senderId]
+  );
+}
+
+// ==================== LEADS ====================
+
+/**
+ * Upsert a lead by (page_id, sender_id). Only overwrites fields that are
+ * non-null in `fields` — preserves data captured in earlier messages.
+ */
+export async function upsertLead(ownerId, pageId, senderId, fields = {}) {
+  const { name, phone, email, notes } = fields;
+  const result = await query(
+    `INSERT INTO leads (owner_id, page_id, sender_id, name, phone, email, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (page_id, sender_id) DO UPDATE SET
+       name       = COALESCE(EXCLUDED.name,  leads.name),
+       phone      = COALESCE(EXCLUDED.phone, leads.phone),
+       email      = COALESCE(EXCLUDED.email, leads.email),
+       notes      = COALESCE(EXCLUDED.notes, leads.notes),
+       updated_at = now()
+     RETURNING id`,
+    [ownerId, pageId, senderId, name || null, phone || null, email || null, notes || null]
+  );
+  return result.rows[0]?.id || null;
+}
+
+export async function getLeads(ownerId, { pageId = null, status = null, limit = 200 } = {}) {
+  const where = ['l.owner_id = $1'];
+  const params = [ownerId];
+  if (pageId) { where.push(`l.page_id = $${params.length + 1}`); params.push(pageId); }
+  if (status) { where.push(`l.status = $${params.length + 1}`); params.push(status); }
+
+  const result = await query(
+    `SELECT l.*, p.page_name
+     FROM leads l
+     LEFT JOIN pages p ON p.page_id = l.page_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY l.updated_at DESC
+     LIMIT $${params.length + 1}`,
+    [...params, limit]
+  );
+  return result.rows;
+}
+
+export async function updateLead(id, ownerId, fields = {}) {
+  const allowed = ['name', 'phone', 'email', 'notes', 'status'];
+  const setClauses = [];
+  const values = [];
+  let idx = 1;
+  for (const k of allowed) {
+    if (fields[k] !== undefined) {
+      setClauses.push(`${k} = $${idx++}`);
+      values.push(fields[k]);
+    }
+  }
+  if (setClauses.length === 0) return false;
+  setClauses.push(`updated_at = now()`);
+  values.push(id, ownerId);
+  const result = await query(
+    `UPDATE leads SET ${setClauses.join(', ')} WHERE id = $${idx++} AND owner_id = $${idx++} RETURNING id`,
+    values
+  );
+  return result.rowCount > 0;
+}
+
+export async function deleteLead(id, ownerId) {
+  const result = await query(
+    'DELETE FROM leads WHERE id = $1 AND owner_id = $2 RETURNING id',
+    [id, ownerId]
+  );
+  return result.rowCount > 0;
+}
+
 /**
  * Atomically claim a comment for response — returns true if this is the first time
  * we've seen this (page_id, comment_id), false if already replied.
@@ -552,6 +660,32 @@ export async function initDatabase() {
       replied_at TIMESTAMPTZ DEFAULT now(),
       PRIMARY KEY (page_id, comment_id)
     )`);
+    // Auto-apply migration 013: human takeover (conversation pauses)
+    await query(`CREATE TABLE IF NOT EXISTS conversation_pauses (
+      page_id      TEXT NOT NULL,
+      sender_id    TEXT NOT NULL,
+      paused_until TIMESTAMPTZ NOT NULL,
+      reason       TEXT DEFAULT 'user_requested',
+      created_at   TIMESTAMPTZ DEFAULT now(),
+      PRIMARY KEY (page_id, sender_id)
+    )`);
+    // Auto-apply migration 014: leads capture
+    await query(`CREATE TABLE IF NOT EXISTS leads (
+      id          SERIAL PRIMARY KEY,
+      owner_id    TEXT NOT NULL,
+      page_id     TEXT NOT NULL,
+      sender_id   TEXT NOT NULL,
+      name        TEXT,
+      phone       TEXT,
+      email       TEXT,
+      notes       TEXT,
+      status      TEXT DEFAULT 'new' CHECK (status IN ('new', 'contacted', 'qualified', 'closed', 'archived')),
+      created_at  TIMESTAMPTZ DEFAULT now(),
+      updated_at  TIMESTAMPTZ DEFAULT now(),
+      UNIQUE (page_id, sender_id)
+    )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_leads_owner ON leads(owner_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_leads_page ON leads(page_id)`);
     console.log('✅ PostgreSQL database ready');
 
     // Clean up old conversations daily — only schedule once.
