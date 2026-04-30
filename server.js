@@ -696,12 +696,24 @@ async function captureLeadFromMessage(page, senderId, message) {
         const profile = await getUserProfile(page.page_token, senderId, page.platform);
         if (profile?.name) info.name = profile.name;
 
-        // 2. Only generate AI summary if this lead has no notes yet (avoids repeat OpenAI calls)
+        // 2. Only generate notes if this lead has no notes yet (avoids repeat OpenAI calls)
         const existing = await db.getLeadBySender(page.page_id, senderId);
         if (!existing?.notes) {
             const history = await db.getConversation(page.page_id, senderId);
             const aiSummary = await generateLeadSummary(ownerSettings, history, page.page_name);
-            info.notes = aiSummary || `Captured from: "${message}"`;
+
+            if (aiSummary) {
+                info.notes = aiSummary;
+            } else {
+                // Fallback: pull the last 3 customer messages that aren't just a phone/email
+                // so we capture the reason they reached out, not the number itself
+                const reasonMessages = (history || [])
+                    .filter(m => m.role === 'user' && !extractLeadInfo(m.content))
+                    .slice(-3)
+                    .map(m => m.content.trim())
+                    .filter(Boolean);
+                info.notes = reasonMessages.length ? reasonMessages.join(' / ') : null;
+            }
         }
 
         const id = await db.upsertLead(page.owner_id, page.page_id, senderId, info);
