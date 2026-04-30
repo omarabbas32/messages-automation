@@ -343,6 +343,14 @@ export async function resumeConversation(pageId, senderId) {
  * Upsert a lead by (page_id, sender_id). Only overwrites fields that are
  * non-null in `fields` — preserves data captured in earlier messages.
  */
+export async function getLeadBySender(pageId, senderId) {
+  const result = await query(
+    'SELECT id, notes FROM leads WHERE page_id = $1 AND sender_id = $2 LIMIT 1',
+    [pageId, senderId]
+  );
+  return result.rows[0] || null;
+}
+
 export async function upsertLead(ownerId, pageId, senderId, fields = {}) {
   const { name, phone, email, notes } = fields;
   const result = await query(
@@ -360,22 +368,28 @@ export async function upsertLead(ownerId, pageId, senderId, fields = {}) {
   return result.rows[0]?.id || null;
 }
 
-export async function getLeads(ownerId, { pageId = null, status = null, limit = 200 } = {}) {
+export async function getLeads(ownerId, { pageId = null, status = null, search = null, limit = 50, offset = 0 } = {}) {
   const where = ['l.owner_id = $1'];
   const params = [ownerId];
   if (pageId) { where.push(`l.page_id = $${params.length + 1}`); params.push(pageId); }
   if (status) { where.push(`l.status = $${params.length + 1}`); params.push(status); }
+  if (search) {
+    const term = `%${search}%`;
+    where.push(`(l.name ILIKE $${params.length + 1} OR l.phone ILIKE $${params.length + 2} OR l.email ILIKE $${params.length + 3})`);
+    params.push(term, term, term);
+  }
 
-  const result = await query(
-    `SELECT l.*, p.page_name
-     FROM leads l
-     LEFT JOIN pages p ON p.page_id = l.page_id
-     WHERE ${where.join(' AND ')}
-     ORDER BY l.updated_at DESC
-     LIMIT $${params.length + 1}`,
-    [...params, limit]
-  );
-  return result.rows;
+  const baseWhere = `FROM leads l LEFT JOIN pages p ON p.page_id = l.page_id WHERE ${where.join(' AND ')}`;
+
+  const [dataResult, countResult] = await Promise.all([
+    query(
+      `SELECT l.*, p.page_name ${baseWhere} ORDER BY l.updated_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    ),
+    query(`SELECT COUNT(*)::int AS total ${baseWhere}`, params),
+  ]);
+
+  return { rows: dataResult.rows, total: countResult.rows[0]?.total ?? 0 };
 }
 
 export async function updateLead(id, ownerId, fields = {}) {

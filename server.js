@@ -637,6 +637,36 @@ async function getUserProfile(pageToken, userId, platform = 'facebook') {
     }
 }
 
+/**
+ * Generate a short AI summary of what the customer was talking about.
+ */
+async function generateLeadSummary(ownerSettings, history, pageName) {
+    if (!history || history.length === 0) return null;
+
+    try {
+        const apiKey = ownerSettings?.openai_api_key;
+        const client = apiKey ? new OpenAI({ apiKey }) : openai;
+        if (!client) return null;
+
+        const convText = history.map(m => `${m.role}: ${m.content}`).join('\n');
+        
+        const res = await client.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                { role: "system", content: `You are a sales assistant. Summarize what this customer wants from the page "${pageName}" in one short sentence in Arabic.` },
+                { role: "user", content: `Summarize this conversation context for a lead entry:\n\n${convText}` }
+            ],
+            max_tokens: 100,
+            temperature: 0.5
+        });
+
+        return res.choices[0].message.content.trim();
+    } catch (err) {
+        console.error('❌ Lead summarization failed:', err.message);
+        return null;
+    }
+}
+
 // ==================== LEAD EXTRACTION ====================
 
 // Egypt-friendly phone regex: matches international (+20...) and local (010..., 011..., 012..., 015...).
@@ -660,12 +690,19 @@ async function captureLeadFromMessage(page, senderId, message) {
     const info = extractLeadInfo(message);
     if (!info) return;
     try {
-        // Try to get real name from Meta
+        const ownerSettings = await db.getUserSettings(page.owner_id);
+
+        // 1. Try to get real name from Meta
         const profile = await getUserProfile(page.page_token, senderId, page.platform);
         if (profile?.name) info.name = profile.name;
 
-        // Store what they were talking about as a note
-        info.notes = `Captured from: "${message}"`;
+        // 2. Only generate AI summary if this lead has no notes yet (avoids repeat OpenAI calls)
+        const existing = await db.getLeadBySender(page.page_id, senderId);
+        if (!existing?.notes) {
+            const history = await db.getConversation(page.page_id, senderId);
+            const aiSummary = await generateLeadSummary(ownerSettings, history, page.page_name);
+            info.notes = aiSummary || `Captured from: "${message}"`;
+        }
 
         const id = await db.upsertLead(page.owner_id, page.page_id, senderId, info);
         console.log(`📇 Lead captured for ${page.page_name}: ${JSON.stringify(info)} → id=${id}`);
@@ -1472,9 +1509,17 @@ app.delete("/api/rules/:id", async (req, res) => {
 
 app.get("/api/leads", async (req, res) => {
     try {
-        const { page_id, status } = req.query;
-        const leads = await db.getLeads(req.userId, { pageId: page_id || null, status: status || null });
-        res.json({ success: true, data: leads });
+        const { page_id, status, search, page = '1', per_page = '50' } = req.query;
+        const limit  = Math.min(Math.max(parseInt(per_page) || 50, 1), 200);
+        const offset = (Math.max(parseInt(page) || 1, 1) - 1) * limit;
+        const { rows, total } = await db.getLeads(req.userId, {
+            pageId: page_id || null,
+            status: status || null,
+            search: search?.trim() || null,
+            limit,
+            offset,
+        });
+        res.json({ success: true, data: rows, total, page: parseInt(page), per_page: limit });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -1506,7 +1551,7 @@ app.delete("/api/leads/:id", async (req, res) => {
 app.get("/api/leads/export.csv", async (req, res) => {
     try {
         const { page_id } = req.query;
-        const leads = await db.getLeads(req.userId, { pageId: page_id || null, limit: 10000 });
+        const { rows: leads } = await db.getLeads(req.userId, { pageId: page_id || null, limit: 10000, offset: 0 });
 
         // Quote CSV fields safely — wrap in "" and double any embedded ".
         const q = (v) => {
